@@ -1,0 +1,155 @@
+---
+# vLLM + Gemma4:E4B test deployment — benchmark vs Ollama (13.6 tok/s)
+#
+# Image: ghcr.io/nvidia-ai-iot/vllm:gemma4-jetson-orin
+#   NVIDIA-built vLLM image specifically for Jetson Orin (L4T r36.5 base).
+#   Recommended by NVIDIA Jetson AI Lab for Gemma4 on Orin.
+#
+# GPU access: CDI — same as Ollama (nvidia.com/gpu: "1" + cdi.k8s.io annotation).
+#   CDI injects all nvgpu/nvhost device nodes, JetPack r36.5 lib bind-mount,
+#   and LD_LIBRARY_PATH automatically.
+#
+# Model download: on first start vLLM pulls google/gemma-4-e4b-it from HuggingFace
+#   into /root/.cache/huggingface (backed by NVMe PV). ~9-10 GB download.
+#   If the model is gated, set HF_TOKEN in the Secret below.
+#
+# Cleanup: kubectl --kubeconfig ./kubeconfig delete namespace vllm-test
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vllm-test
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# HuggingFace token secret — fill in if google/gemma-4-e4b-it requires auth.
+# Create with: kubectl --kubeconfig ./kubeconfig create secret generic hf-token \
+#   -n vllm-test --from-literal=token=hf_YOURTOKEN
+# Then uncomment the env block in the Deployment below.
+---
+# NVMe-backed PV for HuggingFace model cache (~20 GB for E4B)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vllm-hf-cache-pv
+spec:
+  capacity:
+    storage: 30Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /var/lib/vllm-hf-cache
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-hf-cache
+  namespace: vllm-test
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 30Gi
+  volumeName: vllm-hf-cache-pv
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-gemma4
+  namespace: vllm-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-gemma4
+  template:
+    metadata:
+      labels:
+        app: vllm-gemma4
+      annotations:
+        # CDI injection — same mechanism as Ollama
+        cdi.k8s.io/gpu0: "nvidia.com/gpu=0"
+    spec:
+      tolerations:
+        - operator: Exists
+      # Model download can take 10-15 min — give it time
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: vllm
+          image: ghcr.io/nvidia-ai-iot/vllm:gemma4-jetson-orin
+          imagePullPolicy: IfNotPresent
+          command:
+            - vllm
+            - serve
+            # E4B does not fit on Orin NX 16GB with vLLM: UMA OS overhead (~5.3 GB) +
+            # E4B weights (~8 GB BF16) exceeds available memory. Use E2B (~4 GB BF16).
+            - google/gemma-4-E2B-it
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8000"
+            - --max-model-len
+            - "4096"
+            # 0.60 × 15.25 GiB = 9.15 GiB — fits within the ~9.95 GiB free after OS/k8s overhead
+            - --gpu-memory-utilization
+            - "0.60"
+            - --reasoning-parser
+            - gemma4
+            - --tool-call-parser
+            - gemma4
+          ports:
+            - containerPort: 8000
+          env:
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+            # Uncomment + create Secret if model download returns 401:
+            # - name: HF_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: hf-token
+            #       key: token
+          resources:
+            requests:
+              memory: 4Gi
+            limits:
+              memory: 14Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /root/.cache/huggingface
+          # vLLM needs a longer startup time (model download + compile on first run)
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 120
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: vllm-hf-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-gemma4
+  namespace: vllm-test
+spec:
+  type: NodePort
+  selector:
+    app: vllm-gemma4
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 32000

@@ -478,6 +478,25 @@ Kubernetes pod via CDI.
 > large embedding tables. The shim now enforces a 30-second minimum floor. See
 > [BUGS.md — Bug 19](BUGS.md) for the full analysis.
 
+### Alternative inference engines (MLC-LLM, vLLM) — not viable on Jetson Kubernetes
+
+**MLC-LLM**: Does not support Gemma4. `mlc_llm chat` fails with `KeyError: 'Gemma4ForConditionalGeneration'` — the architecture is not registered in MLC's model registry. Tracked in [MLC-LLM issue #3477](https://github.com/mlc-ai/mlc-llm/issues/3477). No workaround exists without a custom MLC build.
+
+**vLLM** (`ghcr.io/nvidia-ai-iot/vllm:gemma4-jetson-orin`, vLLM 0.19.0):
+
+vLLM correctly resolves `Gemma4ForConditionalGeneration` (this architecture was added in vLLM 0.19.0), but running it on a 16 GB UMA Jetson Orin NX in Kubernetes has two fatal constraints:
+
+| Model | BF16 weight size | Required UMA (weights + CUDA ctx) | Available | Result |
+|-------|-----------------|-----------------------------------|-----------|--------|
+| gemma-4-e4b-it (E4B) | ~8 GB | ~12.96 GiB (0.85 × 15.25 GiB) | ~9.95 GiB | **OOM at startup** |
+| gemma-4-E2B-it (E2B) | ~4 GB | ~9.15 GiB (0.60 × 15.25 GiB) | ~9.95 GiB | **Kubernetes control plane crash** |
+
+- **E4B OOM**: `ValueError: Free memory on device cuda:0 (9.95/15.25 GiB) < desired (12.96 GiB)`. OS + Kubernetes overhead pre-consumes ~5.3 GiB of the 15.25 GiB UMA pool, leaving only ~9.95 GiB free. E4B weights alone require 8 GB in BF16.
+
+- **E2B control plane crash**: E2B fits the GPU budget, but model download (~4 GB from HuggingFace) + Python/PyTorch CUDA initialization simultaneously consume all remaining CPU and RAM. During this phase, etcd and kubelet health checks time out with `context deadline exceeded`, and kube-apiserver becomes unreachable via TLS handshake timeout. The Kubernetes control plane is effectively dead until vLLM finishes loading (or crashes). The node itself stays up (talosctl/machined responsive), but Kubernetes cannot be used.
+
+**Conclusion**: vLLM is not viable on this hardware in a Kubernetes environment. NVIDIA's official recommendation for vLLM on Jetson is `docker run` standalone — not Kubernetes — precisely because Kubernetes control plane services compete for the same UMA pool. Ollama (`gemma4:e4b`, 9.6 GB) remains the only practical Gemma4 option on 16 GB Orin NX Kubernetes: it loads the model lazily from a pre-pulled GGUF file with no Python/CUDA initialization overhead.
+
 ### Debug GPU detection
 
 ```bash
