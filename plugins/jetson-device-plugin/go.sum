@@ -79,3 +79,5 @@ k8s.io/kubelet v0.35.4 h1:g/qX1F6PdJQYzAzje3BDRGGEAmeYiiRi9QlLuyliRyw=
 k8s.io/kubelet v0.35.4/go.mod h1:T3X1s+/TM23j8j3hjIem0PCBoSc7VNaKDyOkzAHUiDU=
 k8s.io/kubelet v0.36.0 h1:zWeevZeGl80DInNU6WUo13yWmgbEajkRaBFqeKqkweA=
 k8s.io/kubelet v0.36.0/go.mod h1:PLROV2RwWJkSbAkdZ8HeJWsbsjEEEMlhRIEzAwGeU9c=
+k8s.io/kubelet v0.36.1 h1:FcHiG9wv92xerRPNxztuhYWqwS4IilOQNPxTPQewYgo=
+k8s.io/kubelet v0.36.1/go.mod h1:e6IeoCwqc2TbneCKu6P8HjmWLi7U6SOh3Pocs32iGFM=
