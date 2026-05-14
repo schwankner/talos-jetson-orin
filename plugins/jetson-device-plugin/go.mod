@@ -3,7 +3,7 @@ module github.com/mrmoor/jetson-device-plugin
 go 1.26.0
 
 require (
-	google.golang.org/grpc v1.81.0
+	google.golang.org/grpc v1.81.1
 	k8s.io/kubelet v0.36.1
 )
 
