@@ -1,0 +1,150 @@
+---
+# Ollama deployment — AGX-only, NodePort exposed, model pre-pulled on startup.
+#
+# This manifest is for the isolated AGX test cluster only.
+# It pins the pod to the AGX node and exposes Ollama on NodePort 31435.
+#
+# Model note:
+#   Change OLLAMA_MODEL below if you want a different model tag.
+#   qwen3.6:35b must exist in the Ollama registry, otherwise the initContainer
+#   will fail while pulling the model.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ollama-agx
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ollama-agx-models-pv
+spec:
+  capacity:
+    storage: 80Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /var/lib/ollama-models-agx
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-agx-models
+  namespace: ollama-agx
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 80Gi
+  volumeName: ollama-agx-models-pv
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-agx
+  namespace: ollama-agx
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ollama-agx
+  template:
+    metadata:
+      labels:
+        app: ollama-agx
+      annotations:
+        cdi.k8s.io/gpu0: "nvidia.com/gpu=0"
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: talos-0k9-6mb
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: pull-model
+          image: ollama/ollama:0.20.5
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -lc
+            - |
+              set -e
+              ollama serve >/tmp/ollama-init.log 2>&1 &
+              pid=$!
+              cleanup() { kill "$pid" 2>/dev/null || true; }
+              trap cleanup EXIT
+              for i in $(seq 1 60); do
+                if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 2
+              done
+              ollama pull qwen3.6:35b
+          env:
+            - name: OLLAMA_HOST
+              value: "127.0.0.1:11434"
+            - name: OLLAMA_MODELS
+              value: /models
+            - name: JETSON_JETPACK
+              value: "6"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.20.5
+          imagePullPolicy: IfNotPresent
+          command: ["ollama", "serve"]
+          ports:
+            - containerPort: 11434
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:11434"
+            - name: OLLAMA_MODELS
+              value: "/models"
+            - name: OLLAMA_FLASH_ATTENTION
+              value: "1"
+            - name: OLLAMA_NUM_PARALLEL
+              value: "1"
+            - name: JETSON_JETPACK
+              value: "6"
+            - name: CUDA_LAUNCH_BLOCKING
+              value: "0"
+            - name: OLLAMA_KV_CACHE_TYPE
+              value: "q8_0"
+            - name: GOGC
+              value: "400"
+          resources:
+            requests:
+              memory: 4Gi
+            limits:
+              memory: 48Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-agx-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-agx
+  namespace: ollama-agx
+spec:
+  type: NodePort
+  selector:
+    app: ollama-agx
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+      nodePort: 31435

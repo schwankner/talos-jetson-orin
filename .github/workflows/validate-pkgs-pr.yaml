@@ -91,13 +91,18 @@ jobs:
           CACHE_TAG_KERNEL="kernel-${TALOS_VERSION}-k${KERNEL_VERSION}"
           CACHE_TAG_NVGPU="nvgpu-pkgs-validate-k${KERNEL_VERSION}"
 
-          echo "=== Building nvidia-tegra-nvgpu (pkgs fork, DRM no-shim) ==="
+          # bldr addresses targets by the `name:` in pkg.yaml, which in the pkgs
+          # tree carries a -pkg suffix. Read it instead of hardcoding it.
+          TARGET=$(awk '/^name:/{print $2; exit}' nvidia-tegra-nvgpu/pkg.yaml)
+          [ -n "${TARGET}" ] || { echo "could not read package name from pkg.yaml"; exit 1; }
+
+          echo "=== Building ${TARGET} (pkgs fork, DRM no-shim) ==="
           echo "    Talos ${TALOS_VERSION}, kernel ${KERNEL_VERSION}"
 
           docker buildx build \
             --builder talos-builder \
             --file Pkgfile \
-            --target nvidia-tegra-nvgpu \
+            --target "${TARGET}" \
             --platform linux/arm64 \
             --cache-from "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_NVGPU}" \
             --cache-from "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_KERNEL}" \

@@ -1,0 +1,123 @@
+---
+# AGX-only vLLM deployment (OpenAI-compatible API on NodePort 31435).
+#
+# Official public Qwen model for AGX Orin:
+#   Qwen/Qwen3.6-35B-A3B-FP8
+#
+# This exposes the same external port as the previous Ollama service, but the
+# API is OpenAI-compatible at /v1 (not Ollama's REST API).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vllm-agx
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vllm-agx-models-pv
+spec:
+  capacity:
+    storage: 120Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /var/lib/vllm-models-agx
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-agx-models
+  namespace: vllm-agx
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 120Gi
+  volumeName: vllm-agx-models-pv
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-agx
+  namespace: vllm-agx
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vllm-agx
+  template:
+    metadata:
+      labels:
+        app: vllm-agx
+      annotations:
+        cdi.k8s.io/gpu0: "nvidia.com/gpu=0"
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: talos-0k9-6mb
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: vllm
+          image: ghcr.io/nvidia-ai-iot/vllm:latest-jetson-orin
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -lc
+            - |
+              exec vllm serve Qwen/Qwen3.6-35B-A3B-FP8 \
+                --served-model-name qwen3.6:35b \
+                --host 0.0.0.0 \
+                --port 8000 \
+                --gpu-memory-utilization 0.8 \
+                --enable-prefix-caching \
+                --reasoning-parser qwen3 \
+                --enable-auto-tool-choice \
+                --tool-call-parser qwen3_coder \
+                --max-model-len 4096
+          ports:
+            - containerPort: 8000
+          env:
+            - name: HF_HOME
+              value: /models/huggingface
+            - name: TRANSFORMERS_CACHE
+              value: /models/huggingface
+            - name: HUGGING_FACE_HUB_CACHE
+              value: /models/huggingface
+            - name: VLLM_ATTENTION_BACKEND
+              value: FLASHINFER
+          resources:
+            requests:
+              memory: 8Gi
+            limits:
+              memory: 56Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: vllm-agx-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-agx
+  namespace: vllm-agx
+spec:
+  type: NodePort
+  selector:
+    app: vllm-agx
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 31435
