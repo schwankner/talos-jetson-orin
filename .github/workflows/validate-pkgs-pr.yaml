@@ -163,8 +163,10 @@ jobs:
           fi
 
           # Load order must name the DRM chain, not the shim.
-          CONF="${OUT}/rootfs/usr/lib/modprobe.d/nvidia-tegra.conf"
-          if [ -f "${CONF}" ]; then
+          # The package finalizes /rootfs to /, so locate the file rather than
+          # assuming either layout.
+          CONF=$(find "${OUT}" -path "*/modprobe.d/nvidia-tegra.conf" | head -1)
+          if [ -n "${CONF}" ] && [ -f "${CONF}" ]; then
             echo "  ✓ modprobe.d/nvidia-tegra.conf"
             cat "${CONF}"
             grep -q "softdep tegra-drm pre:" "${CONF}" || { echo "  ✗ tegra-drm softdep missing"; FAIL=1; }
