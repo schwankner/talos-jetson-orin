@@ -78,7 +78,11 @@ if [[ -d "${KERNEL_CERTS_DIR}" ]]; then
   # The kernel's certs/Makefile auto-generates "signing_key.pem" on every fresh build,
   # overwriting any copy we place there. "talos_signing_key.pem" has no auto-gen rule,
   # so make never touches it and our key is always embedded in the kernel.
-  cp "${KEY_PEM}"  "${KERNEL_CERTS_DIR}/talos_signing_key.pem"
+  # CONFIG_MODULE_SIG_KEY must name a PEM holding BOTH the private key and its
+  # certificate: certs/Makefile builds signing_key.x509 by running extract-cert
+  # against this very file, so a key-only PEM fails the build with
+  # "PEM routines::no start line" once the kernel reaches the certs/ target.
+  cat "${KEY_PEM}" "${KEY_X509}" > "${KERNEL_CERTS_DIR}/talos_signing_key.pem"
   cp "${KEY_X509}" "${KERNEL_CERTS_DIR}/talos_signing_key.x509"
   info "Keys copied to ${KERNEL_CERTS_DIR}/talos_signing_key.{pem,x509}"
 else
