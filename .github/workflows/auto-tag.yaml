@@ -2,8 +2,12 @@ name: Auto-tag on version change
 
 # Triggered when version-controlling files change on main (Renovate automerge).
 # Reads TALOS_VERSION + NVGPU_VERSION from common.sh, creates a git tag
-# v<talos>-nvgpu<nvgpu> → this tag push triggers release.yaml to build the
-# full USB image and create a GitHub Release.
+# v<talos>-nvgpu<nvgpu>, then explicitly dispatches release.yaml against it.
+#
+# The dispatch is required, not redundant: the tag is pushed with the default
+# GITHUB_TOKEN, and GitHub does not let events created by that token start new
+# workflow runs — so release.yaml's `push: tags` trigger never fires and no
+# image is ever published. workflow_dispatch is the documented exception.
 #
 # Skipped if the tag already exists (idempotent).
 
@@ -16,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # required to dispatch release.yaml
 
 jobs:
   create-tag:
@@ -39,15 +44,27 @@ jobs:
           echo "Derived tag: ${TAG}"
 
       - name: Create and push tag (skip if already exists)
+        id: tag
         env:
           TAG: ${{ steps.versions.outputs.tag }}
         run: |
           if git rev-parse "${TAG}" >/dev/null 2>&1; then
             echo "✓ Tag ${TAG} already exists — nothing to do"
+            echo "created=false" >> "$GITHUB_OUTPUT"
           else
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git config user.name  "github-actions[bot]"
             git tag "${TAG}"
             git push origin "${TAG}"
-            echo "✓ Created tag: ${TAG} → release.yaml will now build the USB image"
+            echo "✓ Created tag: ${TAG}"
+            echo "created=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Trigger release build for the new tag
+        if: steps.tag.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.versions.outputs.tag }}
+        run: |
+          gh workflow run release.yaml --ref "${TAG}"
+          echo "✓ Dispatched release.yaml for ${TAG}"
