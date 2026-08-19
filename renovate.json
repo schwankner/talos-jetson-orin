@@ -64,8 +64,7 @@
       "managerFilePatterns": ["/^scripts/common\\.sh$/"],
       "matchStrings": ["TALOS_VERSION=\"\\$\\{TALOS_VERSION:-(?<currentValue>[^}\"]+)\\}\""],
       "depNameTemplate": "siderolabs/talos",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v?(?<version>.*)$"
+      "datasourceTemplate": "github-releases"
     },
     {
       "customType": "regex",
