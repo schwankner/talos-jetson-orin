@@ -17,8 +17,18 @@ CACHE_REGISTRY="${CACHE_REGISTRY:-}"  # set to ghcr.io/<owner>/build-cache in CI
 # Tracked by Renovate — update-talos.yaml is no longer used (removed).
 TALOS_VERSION="${TALOS_VERSION:-v1.13.8}"
 
-# ── siderolabs/pkgs pin (derived from TALOS_VERSION) ─────────────────────────
-PKGS_COMMIT="${PKGS_COMMIT:-f677246a}"  # matches Talos v1.13.8 (PKGS v1.13.0-55-gf677246, kernel 6.18.42)
+# ── siderolabs/pkgs pin — derived from TALOS_VERSION ─────────────────────────
+# Talos records the exact pkgs commit it was built against in its own
+# Makefile, as `PKGS ?= <git-describe>-g<sha>`. Reading it here means the pin
+# can never desync from TALOS_VERSION again: whatever Renovate bumps it to,
+# PKGS_COMMIT (and KERNEL_VERSION below) follows automatically.
+# Override via env: PKGS_COMMIT=<sha> source scripts/common.sh
+if [ -z "${PKGS_COMMIT:-}" ]; then
+  PKGS_COMMIT="$(curl -fsSL \
+    "https://raw.githubusercontent.com/siderolabs/talos/${TALOS_VERSION}/Makefile" \
+    | grep '^PKGS ?=' | sed -E 's/^PKGS \?= .*-g([0-9a-f]+)$/\1/')"
+  [ -z "${PKGS_COMMIT}" ] && { echo "[ERROR] Could not derive PKGS_COMMIT from Talos ${TALOS_VERSION} Makefile" >&2; exit 1; }
+fi
 PKGS_BRANCH="${PKGS_BRANCH:-release-$(echo "${TALOS_VERSION}" | sed 's/^v//' | cut -d. -f1,2)}"
 
 # ── Kernel version — derived automatically from siderolabs/pkgs ──────────────
