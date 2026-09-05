@@ -11,7 +11,7 @@
 #                           and as signing_key.pem to nvidia-tegra-nvgpu/
 #   kernel-build          → embeds talos_signing_key.pem (make never auto-regenerates it)
 #   nvidia-tegra-nvgpu    → signs all .ko with signing_key.pem from /pkg/
-#   custom-installer      → gets the vmlinuz from this exact kernel-build
+#   custom-installer      → installer-base + the vmlinuz from this exact kernel-build
 #   → UKI kernel and ALL extension modules ALWAYS share the same signing key
 #
 # Usage:
@@ -21,7 +21,7 @@
 #
 # Outputs:
 #   - Registry: ${REGISTRY}/nvidia-tegra-nvgpu:${NVGPU_VERSION}-${KERNEL_VERSION}-talos
-#   - Registry: ${REGISTRY}/custom-installer:${TALOS_VERSION}-${KERNEL_VERSION}  (updated kernel)
+#   - Registry: ${REGISTRY}/custom-installer:${TALOS_VERSION}-${KERNEL_VERSION}  (installer-base + new kernel)
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
@@ -187,12 +187,24 @@ info "    Key verified: kernel serial ${KERNEL_KEY_SERIAL} matches keys/signing_
 # ── Step 5: Rebuild custom-installer with the new vmlinuz ──────────────────────
 # This ensures the kernel embedded in the UKI has the SAME signing key as
 # the nvgpu modules. Skipping this step would cause module rejection on boot.
-info "Step 5: Rebuilding custom-installer with new vmlinuz..."
+#
+# Base image is ghcr.io/siderolabs/installer-base, NOT ghcr.io/siderolabs/installer.
+# Since Talos 1.14 the full `installer` image is no longer published: released
+# installers are served by the Image Factory, which cannot take a custom kernel.
+# `installer-base` (rootfs + /usr/bin/installer, no kernel) is still published and
+# is what Talos' own imager uses as the default baseInstaller since 1.11
+# (pkg/imager/profile/input.go, SupportsUnifiedInstaller).
+#
+# The copied vmlinuz.efi is a TRANSPORT artifact only: build-uki.sh extracts it
+# from this image to build custom-imager. The imager's `installer` output re-adds
+# the kernel from its own input (custom-imager's /usr/install/arm64/vmlinuz), so
+# the final installer always carries the same signed kernel as the nvgpu modules.
+info "Step 5: Rebuilding custom-installer (installer-base + new vmlinuz)..."
 INSTALLER_BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "${INSTALLER_BUILD_DIR}"' EXIT
 
 cp "${VMLINUZ_SRC}" "${INSTALLER_BUILD_DIR}/vmlinuz.efi"
-printf 'FROM ghcr.io/siderolabs/installer:%s\nCOPY vmlinuz.efi /usr/install/arm64/vmlinuz.efi\n' \
+printf 'FROM ghcr.io/siderolabs/installer-base:%s\nCOPY vmlinuz.efi /usr/install/arm64/vmlinuz.efi\n' \
   "${TALOS_VERSION}" > "${INSTALLER_BUILD_DIR}/Dockerfile"
 
 docker buildx build \
