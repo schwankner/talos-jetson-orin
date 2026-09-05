@@ -28,11 +28,25 @@ jobs:
       - name: Get latest Talos release
         id: latest
         run: |
-          LATEST=$(curl -fsSL \
-            "https://api.github.com/repos/siderolabs/talos/releases/latest" \
-            | jq -r '.tag_name')
+          # /releases/latest returns whichever stable release was published
+          # most recently, not the highest version. siderolabs maintains
+          # several release lines in parallel (1.12.x, 1.13.x, 1.14.x, ...),
+          # so a patch on an older line can be published after our current
+          # pin and look "latest" by publish date while actually being a
+          # lower version (e.g. v1.12.12 published after v1.13.9). Fetch
+          # every stable release and pick the highest by actual semver
+          # (numeric field sort on major.minor.patch, not a lexical/date sort).
+          LATEST=$(gh api repos/siderolabs/talos/releases --paginate \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+            | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sed 's/^v//' \
+            | sort -t. -k1,1n -k2,2n -k3,3n \
+            | tail -1)
+          LATEST="v${LATEST}"
           echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
-          echo "Latest Talos version: ${LATEST}"
+          echo "Latest stable Talos version: ${LATEST}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compare versions
         id: compare
