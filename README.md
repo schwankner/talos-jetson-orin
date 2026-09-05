@@ -1,8 +1,8 @@
 # Talos Linux on NVIDIA Jetson Orin — GPU Compute / CUDA
 
-[![Talos](https://img.shields.io/badge/Talos-v1.13.0-blue)](https://github.com/siderolabs/talos/releases/tag/v1.13.0)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.35.2-blue)](https://kubernetes.io/)
-[![Kernel](https://img.shields.io/badge/kernel-6.18.24--talos-orange)](https://github.com/siderolabs/pkgs)
+[![Talos](https://img.shields.io/badge/Talos-v1.14.0-blue)](https://github.com/siderolabs/talos/releases/tag/v1.14.0)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.37.0-blue)](https://kubernetes.io/)
+[![Kernel](https://img.shields.io/badge/kernel-6.18.48--talos-orange)](https://github.com/siderolabs/pkgs)
 [![nvgpu](https://img.shields.io/badge/nvgpu-5.11.1--drm-green)](https://github.com/OE4T/linux-nvgpu)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
 [![Build](https://github.com/schwankner/talos-jetson-orin/actions/workflows/release.yaml/badge.svg)](https://github.com/schwankner/talos-jetson-orin/actions/workflows/release.yaml)
@@ -60,7 +60,7 @@ No `privileged: true`, no manual `/dev` bind-mounts in pod specs.
 - Jetson Orin module (AGX Orin, Orin NX 16/8 GB, Orin Nano 8/4 GB)
 - EDK2 UEFI in SPI flash (factory default on all Orin modules)
 - USB stick (16 GB+) for flashing
-- `talosctl` v1.13.0: https://github.com/siderolabs/talos/releases/tag/v1.13.0
+- `talosctl` v1.14.0: https://github.com/siderolabs/talos/releases/tag/v1.14.0
 
 > **Xavier, TX2, classic Nano**: different GPU architecture — not supported.
 
@@ -222,8 +222,17 @@ source scripts/common.sh
 
 **Custom installer image** (for `talosctl upgrade`):
 ```
-ghcr.io/schwankner/custom-installer:v1.13.0-6.18.24-nvgpu5.11.1-drm-noshim
+ghcr.io/schwankner/custom-installer:v1.14.0-6.18.48-nvgpu5.11.1-drm-noshim
 ```
+
+> **Talos ≥ 1.14:** `ghcr.io/siderolabs/installer` is no longer published — released installers
+> are served by the [Image Factory](https://factory.talos.dev), which cannot take a custom kernel.
+> The build therefore uses `ghcr.io/siderolabs/installer-base` as the installer base and lets the
+> imager add the custom-signed kernel, which is the same default Talos' own imager uses since 1.11.
+> The v1alpha1 fields `.machine.kernel`, `.machine.install` and `.machine.files` used in
+> `manifests/talos/` are deprecated in 1.14 in favour of `KernelModuleConfig`,
+> `UnattendedInstallConfig` and `EtcFileConfig` documents, but still work unchanged; migrating them
+> is tracked separately.
 
 ---
 
@@ -231,9 +240,9 @@ ghcr.io/schwankner/custom-installer:v1.13.0-6.18.24-nvgpu5.11.1-drm-noshim
 
 | Component | Version |
 |---|---|
-| Talos Linux | v1.13.0 |
-| Kubernetes | v1.35.2 |
-| Linux kernel | 6.18.24-talos |
+| Talos Linux | v1.14.0 |
+| Kubernetes | v1.37.0 |
+| Linux kernel | 6.18.48-talos |
 | nvidia-tegra-nvgpu extension | 5.11.1-drm-noshim |
 | JetPack libs (userspace) | r36.5.0 |
 | Ollama | 0.20.5 |
@@ -294,7 +303,7 @@ This was the root cause before the DRM fix was applied. With the current extensi
 (`nvgpu5.11.1-drm-noshim`), this should not occur. Verify the correct extension is loaded:
 ```bash
 talosctl get extensions --nodes <jetson-ip> | grep nvgpu
-# Expected: nvidia-tegra-nvgpu  5.11.1-drm-noshim-6.18.24-talos
+# Expected: nvidia-tegra-nvgpu  5.11.1-drm-noshim-6.18.48-talos
 ```
 
 ---

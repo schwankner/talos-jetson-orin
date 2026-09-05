@@ -326,7 +326,7 @@ steps:
           ${NVIDIA_OOT}/drivers/gpu/drm/tegra/drm.h
         # Replace conftest probe macros with LINUX_VERSION_CODE guards.
         # Conftest probes are unreliable with Clang/-Werror; explicit version
-        # checks are deterministic. Target kernel: 6.18.24-talos.
+        # checks are deterministic. Target kernel: 6.18.x-talos (guards are range-based).
         TEGRA_DRM=${NVIDIA_OOT}/drivers/gpu/drm/tegra
         # Generic substitution helper for kernel-version-gated PRESENT/ARG macros
         # Format: macro|kernel_version

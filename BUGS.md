@@ -1062,3 +1062,60 @@ apply it via `--config-patch` during `talosctl gen config`.
 
 **Status**: ✅ **FIXED** — `machine.kernel.modules` added to reference `controlplane.yaml`
 and `machine-patch-gpu.yaml`. README Installation section documents `--config-patch` usage.
+
+## Bug 22 — `ghcr.io/siderolabs/installer` No Longer Published (Talos ≥ 1.14)
+
+**Symptom**: Bumping `TALOS_VERSION` to `v1.14.0` breaks `scripts/build-extensions.sh` in
+Step 5 before any of our own code runs:
+
+```
+FROM ghcr.io/siderolabs/installer:v1.14.0
+→ manifest unknown (HTTP 404)
+```
+
+`ghcr.io/siderolabs/installer:v1.13.10` still resolves (200); `v1.14.0` does not.
+
+**Root cause**: Sidero stopped publishing the full `installer` image with Talos 1.14
+(siderolabs/talos#13138, implemented in #13202, listed under "Default Installer Image" in the
+v1.14.0 release notes). Released installers are now served by the Image Factory
+(`factory.talos.dev/metal-installer/<schematic>:<version>`). That is no replacement for this
+project: the Image Factory only accepts *official* extensions by name and has no mechanism to
+inject a custom kernel — and a custom-signed kernel is exactly what the OE4T modules require.
+
+**Fix**: Base `custom-installer` on `ghcr.io/siderolabs/installer-base` instead. It is still
+published (it is in the v1.14.0 "Images" list) and contains only the rootfs plus
+`/usr/bin/installer`, no kernel. This is not a workaround but the upstream default: since
+Talos 1.11 the imager itself falls back to `installer-base:<version>` as `baseInstaller`
+(`pkg/imager/profile/input.go`, `SupportsUnifiedInstaller`), and `make installer` in the Talos
+repo passes it as `--base-installer-image`.
+
+Why the kernel is still ours: the imager's `installer` output (`pkg/imager/out.go`,
+`outInstaller`) takes the `baseInstaller` layers and appends an artifacts layer with the kernel
+taken from its *own* `Input.Kernel.Path` — i.e. from `custom-imager`, which carries our signed
+`vmlinuz`. The `vmlinuz.efi` we `COPY` into `custom-installer` is only a transport artifact for
+`build-uki.sh`; if `installer-base` + our `COPY` layer happen to be exactly two layers, the
+imager even drops the second one (`len(baseLayers) == 2` quirk) and re-adds a fresh one.
+
+`ghcr.io/siderolabs/imager` is unaffected and still published, so `build-uki.sh` and
+`release.yaml` need no change. The v1alpha1 machine-config fields we use (`.machine.kernel`,
+`.machine.install`, `.machine.files`) are deprecated in 1.14 in favour of `KernelModuleConfig`,
+`UnattendedInstallConfig` and `EtcFileConfig`, but are "moved out", not removed, and keep
+working — migrating them is a separate follow-up.
+
+## Bug 23 — `check-talos.yaml` Compares Against the Most Recently *Published* Release, Not the Highest
+
+**Symptom**: The daily check opened issue #52 "New Talos release: v1.12.12 (current: v1.13.9)"
+— a *lower* version reported as an update. At the same time `v1.13.10` (a real patch on our own
+line) was never reported at all.
+
+**Root cause**: The workflow used `GET /repos/siderolabs/talos/releases/latest`, which returns
+whichever stable release was published most recently — not the highest version. Sidero maintains
+several release lines in parallel (1.12.x, 1.13.x, 1.14.x). On 2026-09-03/04 the publish order
+was `v1.14.0` → `v1.13.10` → `v1.12.12`, so by the next daily run "latest" had already moved past
+`v1.13.10` to the older-line patch `v1.12.12`.
+
+**Fix** (`a84d22f`): fetch *all* stable releases (`gh api ... --paginate`, filter
+`draft == false and prerelease == false`) and pick the highest by a numeric field sort on
+`major.minor.patch` (`sort -t. -k1,1n -k2,2n -k3,3n`). A first attempt embedded a multi-line
+Python snippet inside the YAML `run: |` block; unindented lines inside a block scalar break the
+YAML, so the pure `sort`-based version was used instead.
