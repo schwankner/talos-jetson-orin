@@ -28,7 +28,7 @@ jobs:
   build-usb:
     name: Assemble UKI + USB image
     needs: build-extensions
-    runs-on: ubuntu-24.04-arm   # native arm64 — no QEMU needed
+    runs-on: ubuntu-26.04-arm   # native arm64 — no QEMU needed
 
     permissions:
       contents: write
