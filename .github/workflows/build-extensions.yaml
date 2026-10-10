@@ -13,10 +13,22 @@ name: Build Extensions
 
 on:
   workflow_dispatch:
+    inputs:
+      jetpack:
+        description: JetPack line to build (r36 = JetPack 6.x, r39 = JetPack 7.2, see docs/jetpack7.md)
+        type: choice
+        options: [r36, r39]
+        default: r36
   workflow_call:   # allow release.yaml to call this as a reusable workflow
+    inputs:
+      jetpack:
+        type: string
+        default: r36
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # picked up by scripts/common.sh (nvgpu package directory, versions, image tags)
+  JETPACK: ${{ inputs.jetpack || 'r36' }}
 
 jobs:
   build-extensions:
@@ -105,10 +117,9 @@ jobs:
 
           # Inject our custom packages into the pkgs tree
           # whole directory: pkg.yaml plus patches/ (applied from /pkg inside the build)
-          mkdir -p /tmp/talos-pkgs/nvidia-tegra-nvgpu
-          cp -r "${GITHUB_WORKSPACE}/nvidia-tegra-nvgpu/." \
-             /tmp/talos-pkgs/nvidia-tegra-nvgpu/
-          echo "✓ nvidia-tegra-nvgpu/ injected: $(ls /tmp/talos-pkgs/nvidia-tegra-nvgpu/patches/*/*.patch | wc -l) patches"
+          mkdir -p "/tmp/talos-pkgs/${NVGPU_PKG}"
+          cp -r "${GITHUB_WORKSPACE}/${NVGPU_PKG}/." "/tmp/talos-pkgs/${NVGPU_PKG}/"
+          echo "✓ ${NVGPU_PKG}/ injected (JetPack ${JETPACK}): $(find "/tmp/talos-pkgs/${NVGPU_PKG}/patches" -name '*.patch' | wc -l) patches"
 
           mkdir -p /tmp/talos-pkgs/kernel-modules-clang
           cp "${GITHUB_WORKSPACE}/kernel-modules-clang/pkg.yaml" \
@@ -116,7 +127,7 @@ jobs:
           echo "✓ kernel-modules-clang/pkg.yaml injected"
 
           # Note: LLVM_IMAGE and TOOLS_REV are already defined in siderolabs/pkgs
-          # Pkgfile (release-1.13+) — no injection needed. nvidia-tegra-nvgpu/pkg.yaml
+          # Pkgfile (release-1.13+) — no injection needed. ${NVGPU_PKG}/pkg.yaml
           # references {{ .LLVM_IMAGE }}:{{ .TOOLS_REV }} directly from the Pkgfile vars.
 
           # Patch config-arm64: use talos_signing_key.pem (make won't auto-regenerate it)
@@ -130,6 +141,7 @@ jobs:
         run: make build-extensions
         timeout-minutes: 360
         env:
+          SKIP_KERNEL_CACHE_EXPORT: ${{ env.JETPACK == 'r39' && '1' || '0' }}
           REGISTRY: ghcr.io/${{ github.repository_owner }}
           REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}
           # BuildKit registry cache (mode=max): caches ALL intermediate layers
@@ -137,10 +149,33 @@ jobs:
           # kernel compile (~40 min) is a cache hit → build drops to ~15–20 min.
           CACHE_REGISTRY: ghcr.io/${{ github.repository_owner }}/build-cache
 
+      - name: Build + push the r39 firmware extension to ghcr.io
+        # JetPack r39 only. The GA10B firmware comes from the nvidia-l4t-firmware deb in NVIDIA's
+        # apt repository (component "som" of r39.2), packaged by scripts/build-r39-firmware.sh
+        # into nvidia-firmware-ext:<r39 tag>. The userspace libraries are downloaded on the node
+        # by manifests/gpu/cdi-setup-r39.yaml. Independent of the kernel build; skipped when the
+        # tag is already in ghcr.io.
+        if: env.JETPACK == 'r39'
+        env:
+          REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}
+          PUSH: '1'
+        run: |
+          source scripts/common.sh
+          FW="${REGISTRY_DOCKER}/nvidia-firmware-ext:${FIRMWARE_EXT_TAG}"
+          if docker manifest inspect "${FW}" >/dev/null 2>&1; then
+            echo "✓ ${FW} already in ghcr.io — skipping"
+            exit 0
+          fi
+          scripts/build-r39-firmware.sh
+        timeout-minutes: 30
+
       - name: Build + push nvidia-firmware-ext to ghcr.io
         # Independent of the kernel build — only runs when the tag is not yet in ghcr.io.
         # Sources GA10B firmware from the NVIDIA L4T r36 (JetPack 6.2) apt repository.
-        if: steps.check_cache.outputs.skip_fw != 'true'
+        # JetPack r39: the firmware comes from the "som" component (previous step), not from this
+        # apt repository (no t234 component any more), so this step must not publish r36
+        # firmware under the r39 tag.
+        if: steps.check_cache.outputs.skip_fw != 'true' && env.JETPACK != 'r39'
         env:
           REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}
         run: |

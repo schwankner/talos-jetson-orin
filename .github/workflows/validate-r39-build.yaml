@@ -1,0 +1,310 @@
+name: Validate r39 build
+
+# Builds the JetPack 7 (r39.2.1) nvgpu package, nvidia-tegra-nvgpu-r39/, against the Talos
+# kernel and checks the result. Build-only: nothing is pushed except BuildKit cache layers,
+# and the r36.5 package and the release workflows are not touched.
+#
+# What this validates (see docs/jetpack7.md):
+#   - the r39.2.1 tarballs from NVIDIA's gitlab resolve and match their checksums
+#   - patches in nvidia-tegra-nvgpu-r39/patches/ apply
+#   - host1x, mc-utils, host1x-fence, host1x-nvhost, nvhwpm, tegra-drm, nvmap, the devfreq
+#     governor and nvgpu compile against the Talos kernel (Clang)
+#   - the expected .ko files land in the output, signed, at the right paths
+#
+# Two jobs. fast-compile (about 10 min) prepares a kernel tree with `make modules_prepare`
+# and runs the package's own prepare/build scripts against it (scripts/r39-compile-check.sh),
+# which catches source, patch and C compile errors without compiling the kernel. The full
+# BuildKit job only runs after it passes. Both upload their log and .ko files, and write the
+# first compiler errors to the job summary, even on failure.
+#
+# Runtime of the full job: about 85 min (it compiles the kernel; the kernel-stage layers are
+# not exported to the registry cache, a cache export of that size lost a runner once; only the
+# small nvgpu-r39-validate-* tag is written on success).
+# Needs the repository secrets SIGNING_KEY_PEM and SIGNING_KEY_X509 (same as Build Extensions).
+# Triggers:
+#   - pull requests that touch nvidia-tegra-nvgpu-r39/ or this file, so each patch or pin
+#     change is built (note: repository secrets are not available to pull requests from forks;
+#     run the workflow by hand with workflow_dispatch in that case)
+#   - workflow_dispatch
+# A newer push cancels a build still running for the same ref.
+
+on:
+  pull_request:
+    paths:
+      - nvidia-tegra-nvgpu-r39/**
+      - scripts/r39-compile-check.sh
+      - .github/workflows/validate-r39-build.yaml
+  workflow_dispatch:
+
+concurrency:
+  group: validate-r39-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  fast-compile:
+    name: Fast compile check (no kernel build)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 60
+    outputs:
+      symvers_key: ${{ steps.ver.outputs.key }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Derive the Module.symvers cache key
+        id: ver
+        run: |
+          source scripts/common.sh
+          echo "key=r39-symvers-${TALOS_VERSION}-k${KERNEL_VERSION}-pkgs${PKGS_COMMIT}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Talos kernel's Module.symvers
+        id: symvers
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/r39-symvers/Module.symvers
+          key: ${{ steps.ver.outputs.key }}
+
+      - name: Compile the r39 module set against modules_prepare
+        if: steps.symvers.outputs.cache-hit == 'true'
+        env:
+          R39_SYMVERS: /tmp/r39-symvers/Module.symvers
+        run: scripts/r39-compile-check.sh /tmp/r39-fast
+
+      - name: No cached Module.symvers yet
+        if: steps.symvers.outputs.cache-hit != 'true'
+        run: |
+          echo "::notice::No cached Module.symvers for ${{ steps.ver.outputs.key }}. The full job below compiles the kernel and saves it; the fast check works from the next run."
+
+      - name: Summarize compiler errors
+        if: always()
+        run: |
+          LOG=/tmp/r39-fast/build.log
+          [ -f "${LOG}" ] || { echo "no build log (the compile step did not start or failed during setup)"; exit 0; }
+          {
+            echo "## r39 fast compile: first errors"
+            echo
+            echo '```'
+            grep -nE "error:|fatal error|No rule to make target|undefined!|Hunk #[0-9]+ FAILED|patch: \*\*\*|\*\*\* \[" "${LOG}" | head -80 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload log and modules
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nvgpu-r39-fast-compile
+          path: |
+            /tmp/r39-fast/build.log
+            /oot-src/**/*.ko
+          if-no-files-found: warn
+          retention-days: 14
+
+  validate:
+    name: Build nvidia-tegra-nvgpu-r39 (full, BuildKit)
+    needs: fast-compile
+    # the fast job also succeeds when it had no cached Module.symvers to work with (it then only
+    # prints a notice), so this job runs exactly when the fast check passed or could not run
+    if: ${{ needs.fast-compile.result == 'success' }}
+    runs-on: ubuntu-26.04-arm
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        run: |
+          docker buildx create --name talos-builder --driver docker-container --use
+          docker buildx inspect talos-builder --bootstrap
+
+      - name: Restore signing keys
+        env:
+          SIGNING_KEY_PEM: ${{ secrets.SIGNING_KEY_PEM }}
+          SIGNING_KEY_X509: ${{ secrets.SIGNING_KEY_X509 }}
+        run: |
+          if [ -z "${SIGNING_KEY_PEM}" ] || [ -z "${SIGNING_KEY_X509}" ]; then
+            echo "::error::SIGNING_KEY_PEM / SIGNING_KEY_X509 repository secrets are not set"
+            exit 1
+          fi
+          mkdir -p keys
+          printf '%s' "${SIGNING_KEY_PEM}"  > keys/signing_key.pem
+          printf '%s' "${SIGNING_KEY_X509}" > keys/signing_key.x509
+          chmod 600 keys/signing_key.pem
+          openssl x509 -in keys/signing_key.x509 -noout -serial
+
+      - name: Clone siderolabs/pkgs at the pinned commit and inject the r39 package
+        run: |
+          source scripts/common.sh
+          echo "Talos ${TALOS_VERSION}, kernel ${KERNEL_VERSION}, pkgs ${PKGS_COMMIT} (${PKGS_BRANCH})"
+          git clone --filter=blob:none --single-branch --branch "${PKGS_BRANCH}" \
+            https://github.com/siderolabs/pkgs /tmp/talos-pkgs
+          cd /tmp/talos-pkgs && git checkout "${PKGS_COMMIT}"
+
+          # whole directory: pkg.yaml plus patches/ (applied from /pkg inside the build)
+          mkdir -p /tmp/talos-pkgs/nvidia-tegra-nvgpu-r39
+          cp -r "${GITHUB_WORKSPACE}/nvidia-tegra-nvgpu-r39/." /tmp/talos-pkgs/nvidia-tegra-nvgpu-r39/
+          echo "✓ nvidia-tegra-nvgpu-r39/ injected: $(find nvidia-tegra-nvgpu-r39/patches -name '*.patch' | wc -l) patches"
+
+          # Same signing-key wiring as scripts/setup-keys.sh, which only knows the r36 package dir:
+          #   - the kernel embeds talos_signing_key.pem (key + cert)
+          #   - the package signs its modules with signing_key.{pem,x509} from /pkg/
+          CERTS=/tmp/talos-pkgs/kernel/build/certs
+          mkdir -p "${CERTS}"
+          { cat "${GITHUB_WORKSPACE}/keys/signing_key.pem"; printf '\n'; cat "${GITHUB_WORKSPACE}/keys/signing_key.x509"; } \
+            > "${CERTS}/talos_signing_key.pem"
+          cp "${GITHUB_WORKSPACE}/keys/signing_key.x509" "${CERTS}/talos_signing_key.x509"
+          cp "${GITHUB_WORKSPACE}/keys/signing_key.pem" "${GITHUB_WORKSPACE}/keys/signing_key.x509" \
+            /tmp/talos-pkgs/nvidia-tegra-nvgpu-r39/
+
+          # kernel config: use the fixed key (same patch as Build Extensions, so the kernel
+          # layers are a cache hit)
+          sed -i 's|CONFIG_MODULE_SIG_KEY="certs/signing_key.pem"|CONFIG_MODULE_SIG_KEY="certs/talos_signing_key.pem"|g' \
+            /tmp/talos-pkgs/kernel/build/config-arm64
+          grep "CONFIG_MODULE_SIG_KEY" /tmp/talos-pkgs/kernel/build/config-arm64
+
+      - name: Build nvidia-tegra-nvgpu-r39
+        run: |
+          source scripts/common.sh
+          cd /tmp/talos-pkgs
+
+          OUT=/tmp/nvgpu-r39-out
+          mkdir -p "${OUT}"
+
+          CACHE_REGISTRY="ghcr.io/${{ github.repository_owner }}/build-cache"
+          CACHE_TAG_KERNEL="kernel-${TALOS_VERSION}-k${KERNEL_VERSION}"
+          CACHE_TAG_R39="nvgpu-r39-validate-k${KERNEL_VERSION}"
+
+          # bldr addresses targets by the `name:` in pkg.yaml
+          TARGET=$(awk '/^name:/{print $2; exit}' nvidia-tegra-nvgpu-r39/pkg.yaml)
+          [ -n "${TARGET}" ] || { echo "could not read package name from pkg.yaml"; exit 1; }
+          echo "=== Building ${TARGET} ==="
+
+          set -o pipefail
+          docker buildx build \
+            --builder talos-builder \
+            --file Pkgfile \
+            --target "${TARGET}" \
+            --platform linux/arm64 \
+            --progress=plain \
+            --cache-from "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_R39}" \
+            --cache-from "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_KERNEL}" \
+            --cache-to   "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_R39},mode=min" \
+            --output "type=local,dest=${OUT}" \
+            . 2>&1 | tee /tmp/nvgpu-r39-build.log
+        timeout-minutes: 180
+
+      - name: Export Module.symvers of the kernel build
+        id: export
+        # The kernel stage is already in the builder's cache, even when the module build failed.
+        # Only the Module.symvers member is extracted from the stream.
+        if: always()
+        continue-on-error: true
+        run: |
+          source scripts/common.sh
+          cd /tmp/talos-pkgs
+          mkdir -p /tmp/symvers-x /tmp/r39-symvers
+          docker buildx build \
+            --builder talos-builder \
+            --file Pkgfile \
+            --target kernel-build \
+            --platform linux/arm64 \
+            --output "type=tar,dest=-" \
+            . | tar -x -C /tmp/symvers-x --wildcards --no-anchored 'Module.symvers' || true
+          BEST=$(find /tmp/symvers-x -name Module.symvers -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+          [ -n "${BEST}" ] || { echo "::warning::no Module.symvers found in the kernel-build stage"; exit 1; }
+          cp "${BEST}" /tmp/r39-symvers/Module.symvers
+          echo "exported ${BEST} ($(wc -l < /tmp/r39-symvers/Module.symvers) symbols)"
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save Module.symvers to the Actions cache
+        if: always() && steps.export.outputs.ok == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/r39-symvers/Module.symvers
+          key: ${{ needs.fast-compile.outputs.symvers_key }}
+
+      - name: Summarize compiler errors
+        if: always()
+        run: |
+          LOG=/tmp/nvgpu-r39-build.log
+          [ -f "${LOG}" ] || { echo "no build log (the build step did not start)"; exit 0; }
+          {
+            echo "## r39 build: first errors"
+            echo
+            echo '```'
+            grep -nE "error:|fatal error|No rule to make target|undefined!|patch: \*\*\*|FAILED|Hunk #[0-9]+ FAILED|ERROR:" "${LOG}" | grep -v "cache importer" | head -80 || true
+            echo '```'
+            echo
+            echo "- modpost undefined symbols: $(grep -c 'undefined!' "${LOG}" || true)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify build output
+        run: |
+          source scripts/common.sh
+          OUT=/tmp/nvgpu-r39-out
+          MODDIR="${OUT}/rootfs/usr/lib/modules/${KERNEL_VERSION}-talos"
+          echo "=== Modules produced ==="
+          find "${OUT}" -name "*.ko" -exec ls -l {} \; | sort -k9
+
+          FAIL=0
+          for mod in nvgpu host1x host1x-fence host1x-nvhost nvhwpm tegra-drm nvmap mc-utils tegra_hv ivc_ext; do
+            if find "${OUT}" -name "${mod}.ko" | grep -q .; then echo "  ✓ ${mod}.ko"
+            else echo "  ✗ ${mod}.ko MISSING"; FAIL=1; fi
+          done
+
+          # in-tree host1x and tegra-drm must be shadowed, or the ABI mismatch comes back
+          for shadow in kernel/drivers/gpu/host1x/host1x.ko kernel/drivers/gpu/drm/tegra/tegra-drm.ko; do
+            if [ -f "${MODDIR}/${shadow}" ]; then echo "  ✓ shadow path ${shadow}"
+            else echo "  ✗ shadow path ${shadow} MISSING"; FAIL=1; fi
+          done
+
+          # debug info must be stripped: nvgpu.ko was 414 MB unstripped, 7.6 MB is NVIDIA's size
+          NVGPU_KB=$(( $(stat -c %s "${MODDIR}/extra/nvidia-tegra/nvgpu.ko") / 1024 ))
+          if [ "${NVGPU_KB}" -gt 51200 ]; then echo "  ✗ nvgpu.ko is ${NVGPU_KB} KB, debug info not stripped"; FAIL=1
+          else echo "  ✓ nvgpu.ko ${NVGPU_KB} KB"; fi
+
+          # every module must carry a signature and the kernel's vermagic
+          while IFS= read -r ko; do
+            if ! tail -c 64 "${ko}" | grep -q "Module signature appended"; then
+              echo "  ✗ unsigned: ${ko#${OUT}/}"; FAIL=1
+            fi
+            vm=$(modinfo -F vermagic "${ko}" 2>/dev/null | awk '{print $1}')
+            if [ "${vm}" != "${KERNEL_VERSION}-talos" ]; then
+              echo "  ✗ vermagic '${vm}' != ${KERNEL_VERSION}-talos: ${ko#${OUT}/}"; FAIL=1
+            fi
+          done < <(find "${OUT}" -name "*.ko")
+
+          CONF=$(find "${OUT}" -path "*/modprobe.d/nvidia-tegra.conf" | head -1)
+          if [ -n "${CONF}" ]; then echo "  ✓ modprobe.d/nvidia-tegra.conf"; cat "${CONF}"
+          else echo "  ✗ modprobe.d/nvidia-tegra.conf MISSING"; FAIL=1; fi
+
+          [ "${FAIL}" -eq 0 ] && echo "✓ r39 package builds and verifies" || { echo "✗ verification failed"; exit 1; }
+
+      - name: Upload log and modules
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nvgpu-r39-build
+          path: |
+            /tmp/nvgpu-r39-build.log
+            /tmp/nvgpu-r39-out/**/*.ko
+          if-no-files-found: warn
+          retention-days: 14

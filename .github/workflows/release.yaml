@@ -5,9 +5,17 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      jetpack:
+        description: JetPack line to build (r36 = JetPack 6.x, r39 = JetPack 7.2, see docs/jetpack7.md)
+        type: choice
+        options: [r36, r39]
+        default: r36
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # picked up by scripts/common.sh in every step below (versions, image tags, output names)
+  JETPACK: ${{ inputs.jetpack || 'r36' }}
 
 # workflow-level: must cover everything any job below needs
 permissions:
@@ -19,6 +27,8 @@ jobs:
   build-extensions:
     name: Build extensions (skip if cached)
     uses: ./.github/workflows/build-extensions.yaml
+    with:
+      jetpack: ${{ inputs.jetpack || 'r36' }}
     secrets: inherit
     permissions:
       contents: read
@@ -171,7 +181,7 @@ jobs:
       - name: Upload USB image as workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: talos-jetson-usb-${{ steps.ref.outputs.safe }}
+          name: talos-jetson-usb-${{ steps.ref.outputs.safe }}${{ env.JETPACK == 'r39' && '-r39' || '' }}
           path: ${{ steps.img.outputs.path }}
           retention-days: 30
 

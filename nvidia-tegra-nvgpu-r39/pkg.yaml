@@ -1,0 +1,180 @@
+name: nvidia-tegra-nvgpu-r39
+variant: scratch
+shell: /bin/bash
+dependencies:
+  - stage: base
+  - stage: kernel-build
+  - image: "{{ .LLVM_IMAGE }}:{{ .TOOLS_REV }}"
+steps:
+  - sources:
+      # JetPack 7.2 / Jetson Linux r39.2.1 (tag jetson_39.2.1), straight from NVIDIA's gitlab:
+      # OE4T has no r39 branch of linux-nvgpu or linux-nv-oot. See docs/jetpack7.md for why
+      # r39.2.1 (nvmap out-of-bounds fixes) and how to fall back to r39.2.0.
+      - url: https://gitlab.com/nvidia/nv-tegra/tegra/kernel-src/linux-nvgpu/-/archive/fc23d33512d3bf1361b201e31406c47762102429/linux-nvgpu-fc23d33512d3bf1361b201e31406c47762102429.tar.gz
+        destination: nvgpu.tar.gz
+        sha256: "5291c81113b607479d6f3a089105b78d549c23ebd1df82ee09055400b22ff03f"
+        sha512: "8f0e3e677a6a3d9b9121e6713965daf1a0e69f0fbf3056a9d3625e94bfa9742ebca60f75bee5306698a7714c60b3eeddfd5a2d13a46c41c078824d924e15ca25"
+      - url: https://gitlab.com/nvidia/nv-tegra/linux-nv-oot/-/archive/e71bacb7c611f880c5f341263967f13de54de3a9/linux-nv-oot-e71bacb7c611f880c5f341263967f13de54de3a9.tar.gz
+        destination: nvidia-oot.tar.gz
+        sha256: "80cdea02475ecc94f98bb1a9de81315a1d7f7985d99cba14621c1198ccdd1362"
+        sha512: "9189f0580f0ff7d7f46464b519c4705f8ffa7195c4db2b9fb7c7aafb578a545399e56aa8710943216c603e9a55bad228d8cdf4da06b25cb77c9f4355938186e0"
+      - url: https://gitlab.com/nvidia/nv-tegra/linux-hwpm/-/archive/80b966b1bdc20f896cc9625a84708cbbe4638e38/linux-hwpm-80b966b1bdc20f896cc9625a84708cbbe4638e38.tar.gz
+        destination: hwpm.tar.gz
+        sha256: "98db24aba32e1140233b0793621a4758dc4f4688670041c12b81c1861a42231a"
+        sha512: "91444234ef00704dfa11ca9855f7639382ac87c4b4bfb10eaa153dd108d99034a5d494c10e804f2217c52c8135507d876270ddba362cdf586a59a9c9b3e6b226"
+    env:
+      ARCH: arm64
+      LLVM: "1"
+      LLVM_IAS: "1"
+      # conftest compiles its probes with $CC (default: cc = GCC). Against a
+      # Clang-built kernel those probes fail wholesale and every NV_* macro stays
+      # undefined. The kernel build itself ignores CC when LLVM=1.
+      CC: clang
+      # The OE4T top-level Makefiles add these include paths for every module; the
+      # module directories are built individually here, so pass them globally.
+      # The same goes for the two defines nvidia-oot/drivers/gpu/Makefile exports when any
+      # of the Tegra 2x..194 SoC options is on (Talos enables 132/210/186/194/234). Without
+      # CONFIG_DRM_TEGRA_HAVE_DISPLAY, struct host1x_info has no reserve_vblank_syncpts
+      # field and host1x/dev.c does not compile.
+      KCFLAGS: >-
+        -I/oot-src/out/nvidia-conftest
+        -I/oot-src/nvidia-oot/include
+        -I/oot-src/nvidia-oot/drivers/video/tegra/nvmap/include
+        -DCONFIG_HOST1X_HAVE_SYNCPT_BASE
+        -DCONFIG_DRM_TEGRA_HAVE_DISPLAY
+    prepare:
+      - |
+        for t in nvgpu nvidia-oot hwpm; do
+          mkdir -p /oot-src/$t
+          tar xzf $t.tar.gz -C /oot-src/$t --strip-components=1
+        done
+        # patches/<tree>/*.patch applies to /oot-src/<tree>
+        for p in /pkg/patches/*/*.patch; do [ -e "$p" ] || continue; t=${p%/*}; patch -p1 -d /oot-src/${t##*/} < $p; done
+    build:
+      - |
+        # conftest probes the kernel API and writes conftest/*.h, which selects the
+        # code paths in every module (see CC above). Its Makefile hardcodes -Werror,
+        # which turns Clang-only warnings into failed probes: 26 of 129 macros go
+        # missing (measured), e.g. NV___ASSIGN_STR_HAS_NO_SRC_ARG, and one inverted
+        # "function present" probe reports the wrong answer.
+        CONFTEST=/oot-src/out/nvidia-conftest/nvidia
+        mkdir -p $CONFTEST
+        cp -a /oot-src/nvidia-oot/scripts/conftest/. $CONFTEST/
+        sed -i 's/ -Werror / /' $CONFTEST/Makefile
+        make -j$(nproc) -f $CONFTEST/Makefile src=$CONFTEST obj=$CONFTEST \
+          NV_KERNEL_SOURCES=/src NV_KERNEL_OUTPUT=/src
+        # a probe every 6.3+ kernel must pass: fails the build if conftest itself is broken
+        grep -rq '#define NV_IOMMU_MAP_HAS_GFP_ARG' $CONFTEST/conftest/
+      - |
+        OOT=/oot-src/nvidia-oot
+        SYMS=/oot-src/out/Module.symvers.nvidia
+        : > $SYMS
+
+        # The same two switches as the -D flags in KCFLAGS, but for the module Makefiles:
+        # nvidia-oot/drivers/gpu/Makefile exports them to its subdirectories, and the module
+        # directories are built one by one here. host1x/Makefile adds mipi.o (the
+        # tegra_mipi_driver that dev.c registers) only when CONFIG_DRM_TEGRA_HAVE_DISPLAY is set;
+        # without it host1x.ko fails in modpost with an undefined tegra_mipi_driver.
+        export CONFIG_HOST1X_HAVE_SYNCPT_BASE=y
+        export CONFIG_DRM_TEGRA_HAVE_DISPLAY=y
+
+        # Modules are built one directory at a time, but some depend on exports of a module
+        # built later (host1x-fence needs the nvhost_* exports of host1x-nvhost). modpost
+        # would fail the first one; warn instead and check every undefined symbol once all
+        # modules exist (end of this script).
+        export KBUILD_MODPOST_WARN=1
+
+        # Build one out-of-tree module directory against the Talos kernel and add its
+        # exported symbols for the modules that follow (order matters). -Werror is
+        # dropped from all Makefiles because Clang warns where GCC does not.
+        oot() {
+          make -j$(nproc) -C /src M=$1 "${@:2}" modules \
+            CONFIG_TEGRA_OOT_MODULE=m ccflags-remove-y=-Werror \
+            srctree.nvidia-oot=$OOT srctree.nvidia=$OOT srctree.nvconftest=/oot-src/out/nvidia-conftest \
+            srctree.hwpm=/oot-src/hwpm KBUILD_EXTRA_SYMBOLS=$SYMS
+          cat $1/Module.symvers >> $SYMS
+        }
+
+        # r39 nvgpu, tegra-drm, nvmap and mc-utils reference the hypervisor helpers
+        # (is_tegra_hypervisor_mode, tegra_hv_ivc_*, tegra_hv_mempool_*) that tegra_hv.ko
+        # exports; on bare metal it only has to be loaded. Only that module of the directory
+        # (obj-m on the command line overrides the Makefile).
+        # tegra_hv.ko in turn needs NVIDIA's extended IVC API (tegra_ivc_can_read, _read, _write,
+        # _empty, ...), which ivc_ext.ko exports on top of the in-tree tegra-ivc.
+        oot $OOT/drivers/firmware/tegra obj-m=ivc_ext.o
+        oot $OOT/drivers/virt/tegra obj-m=tegra_hv.o
+        oot $OOT/drivers/gpu/host1x
+        oot $OOT/drivers/platform/tegra/mc-utils
+        oot $OOT/drivers/gpu/host1x-fence
+        oot $OOT/drivers/gpu/host1x-nvhost
+        oot /oot-src/hwpm/drivers/tegra/hwpm
+        # headless: no fbdev (the kernel config has it enabled, so it must be forced off)
+        oot $OOT/drivers/gpu/drm/tegra CONFIG_DRM_FBDEV_EMULATION=n
+        # The OE4T defaults are handle-as-id and NvSciIpc support, neither is wanted here (r36
+        # setting, known to work with the r36 userspace). Without NvSciIpc, nvmap_sci_ipc.c is
+        # not built; patch 0002 supplies inline no-op stubs for the IVC functions it would define,
+        # so nvmap.ko needs neither nvsciipc.ko nor ivc-cdev.ko.
+        oot $OOT/drivers/video/tegra/nvmap NVMAP_CONFIG_HANDLE_AS_ID=n NVMAP_CONFIG_SCIIPC=n
+        oot $OOT/drivers/devfreq
+        # syncpoints through the OE4T host1x (the kernel has neither GRHOST nor HOST1X_NEXT)
+        oot /oot-src/nvgpu/drivers/gpu/nvgpu CONFIG_TEGRA_GK20A_NVHOST=y CONFIG_TEGRA_GK20A_NVHOST_HOST1X=y
+
+        # Every undefined symbol of every module must be exported by the kernel (including its
+        # in-tree modules, /src/Module.symvers) or by one of the modules built above.
+        awk -F'\t' '{print $2}' /src/Module.symvers $SYMS | sort -u > /tmp/known-symbols
+        fail=0
+        for ko in $(find /oot-src -name '*.ko' | sort); do
+          llvm-nm -u "$ko" | awk '$1 == "U" {print $2}' | sort -u | comm -23 - /tmp/known-symbols > /tmp/unresolved || true
+          if [ -s /tmp/unresolved ]; then
+            echo "UNRESOLVED symbols in ${ko##*/}:"; sed 's/^/    /' /tmp/unresolved; fail=1
+          fi
+        done
+        [ "$fail" = 0 ] || { echo "ERROR: unresolved module symbols"; exit 1; }
+        echo "all module symbols resolve"
+    install:
+      - |
+        OOT=/oot-src/nvidia-oot
+        MOD=/rootfs/usr/lib/modules/$(cat /src/include/config/kernel.release)
+
+        install -D -m 644 -t $MOD/extra/nvidia-tegra $(find /oot-src -name '*.ko')
+        # Shadow the in-tree host1x and tegra-drm. They are built against the vanilla
+        # host1x ABI; depmod would otherwise point modprobe at them and tegra_drm
+        # fails with "disagrees about version of symbol host1x_job_alloc".
+        install -D -m 644 -t $MOD/kernel/drivers/gpu/host1x    $OOT/drivers/gpu/host1x/host1x.ko
+        install -D -m 644 -t $MOD/kernel/drivers/gpu/drm/tegra $OOT/drivers/gpu/drm/tegra/tegra-drm.ko
+
+        # Drop the debug sections before signing (the signature covers the file). The Talos
+        # kernel config has CONFIG_DEBUG_INFO=y with uncompressed DWARF, which made nvgpu.ko
+        # 414 MB (NVIDIA's stripped build of the same module is 7.6 MB) and the kernel reads the
+        # whole file into memory to load it. --strip-debug is what INSTALL_MOD_STRIP=1 does; the
+        # symbol table stays, so oopses still show function names.
+        find $MOD -name '*.ko' -exec llvm-strip --strip-debug {} \;
+
+        # Sign with the same fixed key the kernel was built with (setup-keys.sh copies
+        # it into the package directory). A key mismatch leaves every module unloadable.
+        cp /pkg/signing_key.pem /pkg/signing_key.x509 /src/certs/
+        find $MOD -name '*.ko' -exec /src/scripts/sign-file sha512 \
+          /src/certs/signing_key.pem /src/certs/signing_key.x509 {} \;
+
+        # Load order, mirroring the symbol dependencies of the built modules: tegra_hv -> ivc_ext; host1x-nvhost and host1x-fence -> host1x, and
+        # host1x-fence also uses the nvhost_* exports of host1x-nvhost; tegra-drm -> host1x,
+        # nvhwpm, tegra_hv; nvmap and mc-utils -> tegra_hv; nvgpu -> tegra_hv, nvmap,
+        # host1x-fence, mc-utils. tegra_hv and ivc_ext stand in for symbols NVIDIA's own
+        # kernel exports built in.
+        mkdir -p /rootfs/usr/lib/modprobe.d
+        cat > /rootfs/usr/lib/modprobe.d/nvidia-tegra.conf <<'CONF'
+        softdep tegra_hv pre: ivc_ext
+        softdep host1x-nvhost pre: host1x
+        softdep host1x-fence pre: host1x host1x-nvhost
+        softdep nvmap pre: tegra_hv
+        softdep mc-utils pre: tegra_hv
+        softdep tegra-drm pre: tegra_hv host1x host1x-nvhost host1x-fence nvhwpm
+        softdep nvgpu pre: tegra_hv host1x host1x-nvhost host1x-fence nvmap tegra-drm mc-utils
+        CONF
+
+        # build-extensions.sh takes the kernel image and signing cert from here to
+        # assemble custom-installer without exporting the whole kernel-build stage.
+        install -D -m 644 -t /rootfs/kernel /src/arch/arm64/boot/vmlinuz.efi /src/certs/talos_signing_key.x509
+finalize:
+  - from: /rootfs
+    to: /rootfs
