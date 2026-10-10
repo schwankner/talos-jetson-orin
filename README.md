@@ -244,6 +244,21 @@ ghcr.io/schwankner/custom-installer:v1.14.2-6.18.54-nvgpu5.13.0-drm-noshim
 
 ---
 
+## JetPack 7.2 (r39) line — experimental
+
+`JETPACK=r39` selects a second build line: the nvgpu driver from NVIDIA's own r39.2.1 sources (package `nvidia-tegra-nvgpu-r39/`, CUDA 13) instead of the OE4T r36.5 one. The default stays `r36`. Status, differences and run history: [docs/jetpack7.md](docs/jetpack7.md).
+
+```bash
+# CI: Actions → "Build Extensions" or "Build USB Image" → choose jetpack = r39
+# local: JETPACK=r39 make build-extensions
+```
+
+The r39 line builds the nvgpu extension and a firmware extension (`scripts/build-r39-firmware.sh`, from the `nvidia-l4t-firmware` deb), and uses `manifests/gpu/cdi-setup-r39.yaml` instead of `cdi-setup.yaml`. As on r36, the userspace libraries are downloaded on the node by the CDI setup's init container, from NVIDIA's apt repository: for r39 they are in the **`som`** component (`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`; there is no `t234` component), version and SHA-256 pinned in the manifest, about 26 MB. `scripts/check-r39-userspace.sh` (workflow "Check r39 userspace", also weekly) runs that very script and verifies the library closure.
+
+Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. Flashing JetPack 7 firmware changes the device tree the r36 image was built for; the r36 modules still loaded on the r39 firmware in our tests, but do not rely on that for a node that must keep running r36. Tested on an Orin NX 16 GB (reComputer J401) with Talos v1.14.2 / kernel 6.18.54: CUDA 13 driver (`cuInit` ok), llama.cpp on the GPU, a 2-hour soak without errors; details and the pitfalls we hit in [docs/jetpack7.md](docs/jetpack7.md).
+
+---
+
 ## Versions
 
 | Component | Version |

@@ -1,0 +1,315 @@
+---
+# nvidia-cdi-setup (JetPack r39 / JetPack 7.2) — GPU system setup + CDI spec writer
+#
+# Same job as manifests/gpu/cdi-setup.yaml, for the r39 image (see docs/jetpack7.md). Differences:
+#
+#   1. Libraries come from NVIDIA's apt repository, component "som" (not "t234", which does not
+#      exist for r39): nvidia-l4t-core, nvidia-l4t-cuda-nvgpu and nvidia-l4t-cuda, about 26 MB.
+#      The restore-libs init container downloads the three debs once per version, verifies
+#      their SHA-256 and copies the libcuda closure to /var/lib/nvidia-tegra-libs/tegra.
+#      Only the GA10B firmware (nvidia-firmware-ext extension) is part of the node image.
+#
+#   2. More device nodes. The r39 libraries also open /dev/host1x-fence (host1x-fence.ko) and
+#      the /dev/nvhost-* and /dev/host1x-* nodes that exist; every char device found is injected.
+#      The r36 /dev/nvhost-ctrl compatibility symlink is gone.
+#
+#   3. Firmware: the nvidia-firmware-ext extension puts the GA10B files in
+#      /usr/lib/firmware/ga10b; they are synced to NVMe /var/fw-fresh and firmware_class.path is
+#      redirected there to avoid -ETXTBSY on squashfs inodes. The sync runs on every start and
+#      replaces files that differ: /var survives node upgrades, and a copy made once kept the
+#      older firmware in front of the new one (the r39 nvgpu then fails to boot the PMU and
+#      resets the node on GPU power-on).
+#
+#   4. Writes /var/run/cdi/nvidia-jetson.yaml (spec generated dynamically from the device nodes
+#      that actually exist) and keeps it alive across tmpfs resets.
+#
+# Apply (JetPack r39 image only; do not apply together with the r36 manifest):
+#   kubectl apply -f manifests/gpu/cdi-setup-r39.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nvidia-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Shell scripts are stored in a ConfigMap to keep the DaemonSet YAML readable
+# and avoid any YAML escaping issues with complex heredocs / multi-line strings.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-cdi-setup-scripts
+  namespace: nvidia-system
+data:
+  # ── restore-libs.sh ───────────────────────────────────────────────────────
+  # Downloads the r39 userspace libraries libcuda needs from NVIDIA's apt repository
+  # (component "som") into /var/lib/nvidia-tegra-libs/tegra if missing or of another version.
+  # The package versions and SHA-256 sums are pinned (taken from
+  # https://repo.download.nvidia.com/jetson/som/dists/r39.2/main/binary-arm64/Packages);
+  # CI (.github/workflows/check-r39-userspace.yaml) runs this very script and checks that the
+  # result is the complete closure of libcuda.so.1. DEST and APT_BASE can be overridden.
+  restore-libs.sh: |
+    #!/bin/sh
+    set -eu
+    DEST="${DEST:-/nvidia-libs/tegra}"
+    APT_BASE="${APT_BASE:-https://repo.download.nvidia.com/jetson/som}"
+    REL="39.2.1-20260806224157"
+    PKGS="nvidia-l4t-core:277a6fb25f2c06cc2dee6d352bef3abb15929739f396fea1cee70d1dea83008b
+    nvidia-l4t-cuda-nvgpu:a70b1a731eaaf8a528428f1f8fe882ba5b06d670d8ffe28c338342fd195eb302
+    nvidia-l4t-cuda:a8f65b17c3dc9cae34d77e3a3481b809a49443d83241d85d5fea36525af6ab51"
+    MARK="${DEST}/.l4t-${REL}"
+    MIN_SIZE=50000000   # libcuda.so.1.1 is about 91 MB
+
+    if [ -f "${MARK}" ] && \
+       [ "$(stat -c%s "${DEST}/libcuda.so.1.1" 2>/dev/null || echo 0)" -gt "${MIN_SIZE}" ]; then
+      echo "JetPack r39 libs ${REL} already present ($(ls "${DEST}" | wc -l) files). Skipping."
+      exit 0
+    fi
+
+    echo "JetPack r39 libs ${REL} missing or stale, installing from ${APT_BASE}..."
+    if ! command -v curl >/dev/null 2>&1; then
+      apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    fi
+
+    TMP="$(mktemp -d)"
+    trap 'rm -rf "${TMP}"' EXIT
+    for e in ${PKGS}; do
+      p="${e%%:*}"; sha="${e##*:}"
+      f="${p}_${REL}_arm64.deb"
+      curl -fsSL --retry 3 -o "${TMP}/${f}" "${APT_BASE}/pool/main/n/${p}/${f}"
+      echo "${sha}  ${TMP}/${f}" | sha256sum -c -
+      dpkg-deb -x "${TMP}/${f}" "${TMP}/x-${p}"
+    done
+
+    NEW="${DEST}.new"
+    rm -rf "${NEW}" && mkdir -p "${NEW}"
+    NV=usr/lib/aarch64-linux-gnu/nvidia
+    for l in libnvos libnvrm_chip libnvrm_gpu libnvrm_host1x libnvrm_mem libnvrm_sync \
+             libnvsciipc libnvsocsys libnvtegrahv; do
+      cp -L "${TMP}/x-nvidia-l4t-core/${NV}/${l}.so" "${NEW}/"
+    done
+    cp -L "${TMP}/x-nvidia-l4t-cuda-nvgpu/opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1.1" "${NEW}/"
+    # libcuda dlopen()s these two at cuInit; without libnvcucompat.so cuInit returns 999
+    for l in libnvcucompat libnvcuextend; do
+      cp -L "${TMP}/x-nvidia-l4t-cuda/${NV}/${l}.so" "${NEW}/"
+    done
+    ln -s libcuda.so.1.1 "${NEW}/libcuda.so.1"
+    ln -s libcuda.so.1 "${NEW}/libcuda.so"
+    touch "${NEW}/.l4t-${REL}"
+    rm -rf "${DEST}" && mv "${NEW}" "${DEST}"
+
+    echo "Done. $(ls "${DEST}" | wc -l) files installed."
+    echo "  libcuda.so.1.1 : $(stat -c%s "${DEST}/libcuda.so.1.1") bytes"
+
+  # ── cdi-writer.sh ─────────────────────────────────────────────────────────
+  # Runs in the long-lived container: sets up firmware, device
+  # permissions, and writes the CDI spec.  Loops every 60 s to regenerate the
+  # spec if /var/run is cleared (tmpfs reset after host reboot).
+  cdi-writer.sh: |
+    #!/bin/sh
+    set -e
+
+    CDI_DIR=/var/run/cdi
+    CDI_SPEC="${CDI_DIR}/nvidia-jetson.yaml"
+    FW_SRC=/host-firmware/ga10b
+    FW_DEST=/host-var/fw-fresh/ga10b
+
+    write_cdi_spec() {
+      mkdir -p "${CDI_DIR}"
+
+      # Open the spec file and write each section with echo/printf.
+      # We avoid heredocs because the YAML-in-YAML nesting makes indentation
+      # tricky; individual echo statements are unambiguous.
+
+      {
+        echo 'cdiVersion: "0.5.0"'
+        echo 'kind: "nvidia.com/gpu"'
+        echo 'devices:'
+        echo '  - name: "0"'
+        echo '    containerEdits:'
+        echo '      deviceNodes:'
+        # Device strategy: inject all nvgpu/* devices + /dev/dri/renderD128.
+        #
+        # /dev/dri/renderD128 is the DRM render node created by tegra-drm.ko (OE4T build).
+        # libcuda.so opens this node during cuInit to enumerate the iGPU.
+        # Without it, cuInit returns 801 (CUDA_ERROR_NOT_SUPPORTED).
+        #
+        # r39: the libraries also open /dev/host1x-fence and whichever /dev/nvhost-* and
+        # /dev/host1x-* nodes exist; those are injected below when they are real char devices.
+
+        # All /dev/nvgpu/igpu0/* char devices
+        for dev in $(find /dev/nvgpu/igpu0/ -type c 2>/dev/null | sort); do
+          printf '        - path: %s\n          permissions: rw\n' "${dev}"
+        done
+
+        # /dev/nvmap — required for GPU memory allocation
+        if [ -c /dev/nvmap ]; then
+          printf '        - path: /dev/nvmap\n          permissions: rw\n'
+        fi
+
+        # /dev/host1x-fence (host1x-fence.ko) and any /dev/nvhost-* / /dev/host1x-* node that
+        # exists. Only real char devices: CDI rejects symlinks ("not a device node").
+        for dev in $(find /dev -maxdepth 1 \( -name 'host1x-*' -o -name 'nvhost-*' \) -type c 2>/dev/null | sort); do
+          printf '        - path: %s\n          permissions: rw\n' "${dev}"
+        done
+
+        # /dev/dri/renderD128: DRM render node created by tegra-drm.ko (OE4T build).
+        # Required by libcuda.so for GPU enumeration on Tegra (cuInit).
+        # Inject only when the node actually exists (requires tegra-drm extension).
+        if [ -c /dev/dri/renderD128 ]; then
+          printf '        - path: /dev/dri/renderD128\n          permissions: rw\n'
+        fi
+        echo '      mounts:'
+        echo '        # Bind-mount the JetPack r39 library directory written by the restore-libs'
+        echo '        # init container (libcuda and the libraries it needs).'
+        echo '        - hostPath: /var/lib/nvidia-tegra-libs/tegra'
+        echo '          containerPath: /usr/lib/aarch64-linux-gnu/nvidia'
+        echo '          options: [ro, bind]'
+        echo '      env:'
+        echo '        # Prepend the r39 libs so they shadow any stubs in the image.'
+        echo '        - "LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/usr/local/cuda/lib:/usr/local/cuda/lib64:/usr/local/cuda/compat"'
+        # containerEdits at spec root must be an object (ContainerEdits), not an
+        # array.  Omit it entirely — it is optional and defaults to empty.
+        # (Writing 'containerEdits: []' causes containerd to reject the spec with
+        #  "cannot unmarshal array into Go struct field Spec.containerEdits")
+      } > "${CDI_SPEC}"
+
+      DEV_COUNT=$(grep -c 'path: /dev/' "${CDI_SPEC}" 2>/dev/null || echo 0)
+      echo "[cdi-setup] CDI spec written: ${CDI_SPEC} (${DEV_COUNT} device nodes)"
+    }
+
+    # ── Firmware sync (idempotent) ─────────────────────────────────────────
+    # /var survives node upgrades and firmware_class.path below points at it, so a copy made
+    # once would shadow newer firmware from the node image. Copy every file that is missing
+    # or differs, drop the extras.
+    if [ -d "${FW_SRC}" ]; then
+      mkdir -p "${FW_DEST}"
+      for f in "${FW_SRC}"/*; do
+        b=$(basename "${f}")
+        if ! cmp -s "${f}" "${FW_DEST}/${b}"; then
+          echo "[cdi-setup] firmware: updating ${b}"
+          cp -f "${f}" "${FW_DEST}/${b}"
+        fi
+      done
+      for f in "${FW_DEST}"/*; do
+        [ -e "${f}" ] || continue
+        [ -e "${FW_SRC}/$(basename "${f}")" ] || { echo "[cdi-setup] firmware: removing stale $(basename "${f}")"; rm -f "${f}"; }
+      done
+    else
+      echo "[cdi-setup] WARNING: ${FW_SRC} not found, firmware not synced"
+    fi
+    echo "[cdi-setup] Redirecting firmware_class.path -> /var/fw-fresh"
+    echo -n '/var/fw-fresh' > /sys/module/firmware_class/parameters/path
+
+    # ── Device permissions ────────────────────────────────────────────────
+    for dev in \
+        $(find /dev/nvgpu/ -type c 2>/dev/null) \
+        $(find /dev/ -maxdepth 1 \( -name 'nvhost-*' -o -name 'host1x-*' \) -type c 2>/dev/null) \
+        /dev/nvmap; do
+      if [ -e "${dev}" ]; then chmod 666 "${dev}" 2>/dev/null || true; fi
+    done
+
+    # ── Initial CDI spec write ─────────────────────────────────────────────
+    write_cdi_spec
+    echo "[cdi-setup] Setup complete — entering watch loop (60 s interval)"
+
+    # ── Watch loop: regenerate spec if /var/run is cleared ─────────────────
+    while true; do
+      sleep 60
+      if [ ! -f "${CDI_SPEC}" ]; then
+        echo "[cdi-setup] CDI spec missing — regenerating..."
+        write_cdi_spec
+      fi
+    done
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-cdi-setup
+  namespace: nvidia-system
+  labels:
+    app: nvidia-cdi-setup
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-cdi-setup
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: nvidia-cdi-setup
+    spec:
+      tolerations:
+        - operator: Exists
+      priorityClassName: system-node-critical
+      hostPID: true
+
+      # ── Step 1: fetch the JetPack r39 libs (once per version) ───────────
+      initContainers:
+        - name: restore-libs
+          image: ubuntu:22.04@sha256:30dfd7fe96f97c5f5ddf388ce8d098aa509644ad68fdef67244fb71b8169ffcb
+          command: ["/bin/sh", "/scripts/restore-libs.sh"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: nvidia-libs
+              mountPath: /nvidia-libs
+            - name: scripts
+              mountPath: /scripts
+
+      # ── Step 2: firmware + device setup + CDI spec ──────────────────────
+      containers:
+        - name: cdi-writer
+          image: busybox:1.36
+          command: ["/bin/sh", "/scripts/cdi-writer.sh"]
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: dev
+              mountPath: /dev
+            - name: sys
+              mountPath: /sys
+            - name: host-firmware
+              mountPath: /host-firmware
+              readOnly: true
+            - name: host-var
+              mountPath: /host-var
+            - name: cdi-dir
+              mountPath: /var/run/cdi
+            - name: scripts
+              mountPath: /scripts
+
+      volumes:
+        - name: nvidia-libs
+          hostPath:
+            path: /var/lib/nvidia-tegra-libs
+            type: DirectoryOrCreate
+        - name: dev
+          hostPath:
+            path: /dev
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: host-firmware
+          hostPath:
+            path: /usr/lib/firmware
+        - name: host-var
+          hostPath:
+            path: /var
+        - name: cdi-dir
+          hostPath:
+            path: /var/run/cdi
+            type: DirectoryOrCreate
+        - name: scripts
+          configMap:
+            name: nvidia-cdi-setup-scripts
+            defaultMode: 0755
