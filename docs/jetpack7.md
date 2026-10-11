@@ -71,11 +71,21 @@ r39 has no `t234` apt component. The Orin packages are in the **`som`** componen
 `https://repo.download.nvidia.com/jetson/som`, dist `r39.2`. `manifests/gpu/cdi-setup-r39.yaml` downloads three
 debs (`nvidia-l4t-core`, `nvidia-l4t-cuda-nvgpu`, `nvidia-l4t-cuda`, 26 MB, version and SHA-256 pinned in the
 script) once per version and installs the closure of `libcuda.so.1` into `/var/lib/nvidia-tegra-libs/tegra`.
-Two things that are easy to miss:
+It also takes `libnvidia-ptxjitcompiler` from the `cuda-compat-13-2` package of the **`common`** component (88 MB
+download, 32 MB kept). Three things that are easy to miss:
 
 - `libcuda` `dlopen()`s `libnvcucompat.so` and `libnvcuextend.so` at `cuInit` (they are not in its `DT_NEEDED`
   list; both are in `nvidia-l4t-cuda`). Without `libnvcucompat.so`, `cuInit` returns 999 and nothing else is
   logged.
+- `libnvidia-ptxjitcompiler` is not in any L4T deb. `libcuda` loads it for every kernel that has no native code
+  for the GPU (sm_87), which includes the CUDA 13 build of Ollama and the PyTorch and vLLM wheels (they carry
+  sm_80 code and PTX). Without it the first kernel aborts with `CUDA error: PTX JIT compiler library not
+  found`, although GPU discovery succeeded and all layers were offloaded. The manifest installs it from
+  `cuda-compat-13-2` (version 595.71.05, the newest 595.x in the repository; the JetPack 7.2 driver is 595.78 and
+  the difference caused no problem) and uses only that one file, never that package's own `libcuda`. Tested on
+  an Orin NX 16 GB (Talos v1.14.2): stock Ollama v0.40.2 (`cuda_v13`) with `qwen2.5:0.5b` and `qwen3:4b` runs
+  100% on the GPU at 89 and 17.6 tok/s decode (`llama-bench` on the same files: 89.7 and 16.7 tok/s). llama.cpp
+  builds with native sm_87 code do not need the library.
 - The GA10B firmware must match the driver. The CDI setup copies the firmware to `/var/fw-fresh` and points
   `firmware_class.path` there; `/var` survives node upgrades, so a copy made once keeps older firmware in front
   of the new one. With the r36 PMU firmware the r39 `nvgpu` does not boot the PMU (`pwr_falcon_exterrstat

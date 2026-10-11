@@ -2,6 +2,7 @@
 # check-r39-userspace.sh — run the restore-libs.sh of manifests/gpu/cdi-setup-r39.yaml (the very
 # script the node's init container runs) against NVIDIA's apt repository and verify the result:
 # AArch64 ELF files, libcuda.so.1 present and large, the two libraries libcuda dlopen()s at cuInit,
+# the PTX JIT compiler (needed by any kernel without native sm_87 code),
 # and the DT_NEEDED closure complete inside the directory (system libraries excepted).
 #
 # Usage: scripts/check-r39-userspace.sh [workdir]     (needs curl, dpkg-deb, readelf, yq)
@@ -39,7 +40,7 @@ for f in "${DEST}"/*; do
 done
 size=$(stat -c %s "${DEST}/libcuda.so.1.1" 2>/dev/null || echo 0)
 (( size > 50000000 )) || { echo "[ERROR] libcuda.so.1.1 is only ${size} bytes" >&2; fail=1; }
-for l in libcuda.so.1 libcuda.so libnvcucompat.so libnvcuextend.so libnvrm_gpu.so libnvsciipc.so; do
+for l in libcuda.so.1 libcuda.so libnvcucompat.so libnvcuextend.so libnvidia-ptxjitcompiler.so.1 libnvrm_gpu.so libnvsciipc.so; do
   [[ -e "${DEST}/${l}" ]] || { echo "[ERROR] ${l} missing" >&2; fail=1; }
 done
 (( fail == 0 )) || exit 1
