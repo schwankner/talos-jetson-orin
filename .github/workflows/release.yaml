@@ -9,13 +9,11 @@ on:
       jetpack:
         description: JetPack line to build (r36 = JetPack 6.x, r39 = JetPack 7.2, see docs/jetpack7.md)
         type: choice
-        options: [r36, r39]
-        default: r36
+        options: [both, r36, r39]
+        default: both
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # picked up by scripts/common.sh in every step below (versions, image tags, output names)
-  JETPACK: ${{ inputs.jetpack || 'r36' }}
 
 # workflow-level: must cover everything any job below needs
 permissions:
@@ -23,22 +21,60 @@ permissions:
   packages: write
 
 jobs:
+  # ── Job 0: which JetPack lines this run builds ─────────────────────────────
+  # Tag pushes, the auto-tag dispatch (no input) and jetpack=both build r36 and r39 from the
+  # same Talos bump: r36 -> custom-installer, r39 -> custom-installer-jp7.
+  plan:
+    name: Select JetPack lines
+    runs-on: ubuntu-latest
+    outputs:
+      lines: ${{ steps.p.outputs.lines }}
+    steps:
+      - id: p
+        env:
+          JETPACK_INPUT: ${{ inputs.jetpack || 'both' }}
+        run: |
+          case "${JETPACK_INPUT}" in
+            both)    echo 'lines=["r36","r39"]' >> "$GITHUB_OUTPUT" ;;
+            r36|r39) echo "lines=[\"${JETPACK_INPUT}\"]" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "unknown jetpack '${JETPACK_INPUT}'" >&2; exit 1 ;;
+          esac
+
   # ── Job 1: Build kernel + GPU extensions (skips automatically if cached) ───
+  # One line at a time, r36 first: the kernel, kernel-modules-clang and the base installer are
+  # shared, and the r39 build reuses them from the registry (scripts/build-extensions.sh)
+  # instead of compiling the kernel again and racing the r36 run for the same tags.
   build-extensions:
-    name: Build extensions (skip if cached)
+    name: Build extensions (${{ matrix.jetpack }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        jetpack: ${{ fromJSON(needs.plan.outputs.lines) }}
     uses: ./.github/workflows/build-extensions.yaml
     with:
-      jetpack: ${{ inputs.jetpack || 'r36' }}
+      jetpack: ${{ matrix.jetpack }}
     secrets: inherit
     permissions:
       contents: read
       packages: write
 
   # ── Job 2: Assemble UKI + USB image ────────────────────────────────────────
+  # `!cancelled()`: a failed r39 extension build must not block the r36 image (and vice versa);
+  # a leg whose own extensions are missing fails on the image pull.
   build-usb:
-    name: Assemble UKI + USB image
-    needs: build-extensions
+    name: Assemble UKI + USB image (${{ matrix.jetpack }})
+    needs: [plan, build-extensions]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        jetpack: ${{ fromJSON(needs.plan.outputs.lines) }}
     runs-on: ubuntu-26.04-arm   # native arm64 — no QEMU needed
+    env:
+      # picked up by scripts/common.sh in every step below (versions, image tags, output names)
+      JETPACK: ${{ matrix.jetpack }}
 
     permissions:
       contents: write
@@ -76,14 +112,15 @@ jobs:
           REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}
 
       - name: Build versioned installer image for talosctl upgrade
-        # Produces custom-installer:<talos>-<kernel>-nvgpu<nvgpu> — the full installer
+        # Produces <installer repo>:<talos>-<kernel>-nvgpu<nvgpu> (custom-installer for r36,
+        # custom-installer-jp7 for r39) — the full installer
         # with all extensions embedded. Required by `talosctl upgrade --image ...`.
         # The bare custom-installer:<talos>-<kernel> (no nvgpu suffix) built by
         # build-extensions.sh is only the base kernel; this step bakes the
         # extensions in via the Talos imager output.kind=installer.
         run: |
           source scripts/common.sh
-          INSTALLER_TAG="ghcr.io/${{ github.repository_owner }}/custom-installer:${TALOS_VERSION}-${KERNEL_VERSION}-nvgpu${NVGPU_VERSION}"
+          INSTALLER_TAG="ghcr.io/${{ github.repository_owner }}/${INSTALLER_REPO}:${TALOS_VERSION}-${KERNEL_VERSION}-nvgpu${NVGPU_VERSION}"
           CUSTOM_IMAGER_TAG="custom-imager:${TALOS_VERSION}-llvm"
           INSTALLER_OUT="$(pwd)/dist/installer-out"
           mkdir -p "${INSTALLER_OUT}"
@@ -181,55 +218,73 @@ jobs:
       - name: Upload USB image as workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: talos-jetson-usb-${{ steps.ref.outputs.safe }}${{ env.JETPACK == 'r39' && '-r39' || '' }}
+          name: talos-jetson-usb-${{ steps.ref.outputs.safe }}${{ matrix.jetpack == 'r39' && '-r39' || '' }}
           path: ${{ steps.img.outputs.path }}
           retention-days: 30
 
-      - name: Read versions for release notes
-        if: startsWith(github.ref, 'refs/tags/')
-        id: ver
-        run: |
-          source scripts/common.sh
-          echo "talos=${TALOS_VERSION}"   >> "$GITHUB_OUTPUT"
-          echo "kernel=${KERNEL_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "nvgpu=${NVGPU_VERSION}"   >> "$GITHUB_OUTPUT"
+  # ── Job 3: one GitHub Release with the image of every line that was built ───
+  release:
+    name: Create GitHub Release
+    needs: build-usb
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
-      - name: Create GitHub Release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Download USB images
+        uses: actions/download-artifact@v7
+        with:
+          pattern: talos-jetson-usb-*
+          path: usb
+          merge-multiple: true
+
+      - name: Write release notes
+        run: |
+          ls -lh usb/
+          {
+            echo "## USB boot images — ${GITHUB_REF_NAME}"
+            echo
+            echo "**One image per JetPack line for the entire Jetson Orin family.**"
+            echo
+            echo "All Orin modules use the same T234 SoC with GA10B GPU and boot via UEFI (EDK2 in SPI"
+            echo "flash). The DTB is loaded from the board's own SPI flash — no board-specific build"
+            echo "needed. Flash an image to a USB stick and boot any Orin module."
+            echo
+            echo "| Line | Image | Installer (for \`talosctl upgrade\`) | nvidia-tegra-nvgpu |"
+            echo "|------|-------|-------------------------------------|--------------------|"
+            for line in r36 r39; do
+              ( export JETPACK="${line}"; source scripts/common.sh
+                img=$(ls usb/talos-usb-nvgpu${NVGPU_VERSION}.raw* 2>/dev/null | head -1 || true)
+                [ -n "${img}" ] || exit 0
+                inst="ghcr.io/${GITHUB_REPOSITORY_OWNER}/${INSTALLER_REPO}:${TALOS_VERSION}-${KERNEL_VERSION}-nvgpu${NVGPU_VERSION}"
+                label="r36 — JetPack 6.x (default)"; [ "${line}" = r39 ] && label="r39 — JetPack 7.2 (CUDA 13)"
+                echo "| ${label} | \`$(basename "${img}")\` | \`${inst}\` | \`${NVGPU_VERSION}\` |"
+              )
+            done
+            echo
+            source scripts/common.sh
+            echo "Talos Linux \`${TALOS_VERSION}\`, Linux kernel \`${KERNEL_VERSION}\`."
+            echo
+            echo "The r39 line needs JetPack 7 firmware in the board's QSPI — see docs/jetpack7.md before flashing."
+            echo
+            echo "### Flash"
+            echo '```bash'
+            echo "# macOS (replace N with disk number from: diskutil list)"
+            echo "sudo dd if=<image>.raw of=/dev/rdiskN bs=4m && sync"
+            echo "# Linux (replace X with your USB drive from: lsblk)"
+            echo "sudo dd if=<image>.raw of=/dev/sdX bs=4M status=progress && sync"
+            echo '```'
+            echo
+            echo "See [README](https://github.com/${GITHUB_REPOSITORY}#readme) for full setup instructions."
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           name: "Talos Jetson Orin — ${{ github.ref_name }}"
-          body: |
-            ## USB boot image — ${{ github.ref_name }}
-
-            **One image for the entire Jetson Orin family.**
-
-            All Orin modules use the same T234 SoC with GA10B GPU and boot via UEFI (EDK2 in SPI
-            flash). The DTB is loaded from the board's own SPI flash — no board-specific build
-            needed. Flash this image to a USB stick and boot any Orin module.
-
-            | Module | Status |
-            |--------|--------|
-            | Jetson Orin NX 16 GB (reComputer J4012) | ✅ Tested |
-            | Jetson Orin NX 8 GB | ✅ Compatible (same SoC/GPU) |
-            | Jetson Orin Nano 8 GB | ✅ Compatible (same SoC/GPU) |
-            | Jetson Orin Nano 4 GB | ✅ Compatible (same SoC/GPU) |
-            | Jetson AGX Orin (all SKUs) | ✅ Compatible (same SoC/GPU) |
-            | Xavier / TX2 / Nano (classic) | ❌ Different GPU architecture |
-
-            | Component | Version |
-            |-----------|---------|
-            | Talos Linux | `${{ steps.ver.outputs.talos }}` |
-            | Linux kernel | `${{ steps.ver.outputs.kernel }}` |
-            | nvidia-tegra-nvgpu | `${{ steps.ver.outputs.nvgpu }}` |
-
-            ### Flash
-            ```bash
-            # macOS (replace N with disk number from: diskutil list)
-            sudo dd if=${{ steps.img.outputs.name }} of=/dev/rdiskN bs=4m && sync
-            # Linux (replace X with your USB drive from: lsblk)
-            sudo dd if=${{ steps.img.outputs.name }} of=/dev/sdX bs=4M status=progress && sync
-            ```
-
-            See [README](https://github.com/${{ github.repository }}#readme) for full setup instructions.
-          files: ${{ steps.img.outputs.path }}
+          body_path: release-notes.md
+          files: usb/*

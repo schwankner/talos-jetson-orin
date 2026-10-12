@@ -59,10 +59,15 @@ LLVM_IMAGE="${LLVM_IMAGE:-ghcr.io/siderolabs/llvm}"  # informational only
 # below, so an explicit NVGPU_VERSION / FIRMWARE_EXT_TAG in the environment still wins.
 JETPACK="${JETPACK:-r36}"
 NVGPU_PKG="nvidia-tegra-nvgpu"
+# Image repository of the final (extensions baked in) installer. Each line publishes to its own
+# repository so both can be built from one release run: r36 -> custom-installer (unchanged),
+# r39 -> custom-installer-jp7. The shared base image stays custom-installer:<talos>-<kernel>.
+INSTALLER_REPO="custom-installer"
 case "${JETPACK}" in
   r36) ;;
   r39)
     NVGPU_PKG="nvidia-tegra-nvgpu-r39"
+    INSTALLER_REPO="custom-installer-jp7"
     : "${NVGPU_VERSION:=39.2.1-jp7}"
     : "${FIRMWARE_EXT_TAG:=r39-v1}"   # scripts/build-r39-firmware.sh; the userspace libraries are
                                       # downloaded on the node by manifests/gpu/cdi-setup-r39.yaml
@@ -76,7 +81,7 @@ FIRMWARE_EXT_TAG="${FIRMWARE_EXT_TAG:-v5}"        # v1 / v2 / v3 / v4 / v5 (pmu_
 KERNEL_MODULES_VERSION="${KERNEL_MODULES_VERSION:-1.3.0}"
 
 # ── Derived image tags ───────────────────────────────────────────────────────
-IMG_INSTALLER="${REGISTRY}/custom-installer:${TALOS_VERSION}-${KERNEL_VERSION}-nvgpu${NVGPU_VERSION}"
+IMG_INSTALLER="${REGISTRY}/${INSTALLER_REPO}:${TALOS_VERSION}-${KERNEL_VERSION}-nvgpu${NVGPU_VERSION}"
 IMG_KERNEL_MODULES="${REGISTRY}/kernel-modules-clang:${KERNEL_MODULES_VERSION}-${KERNEL_VERSION}-talos"
 IMG_NVGPU="${REGISTRY}/nvidia-tegra-nvgpu:${NVGPU_VERSION}-${KERNEL_VERSION}-talos"
 IMG_FIRMWARE="${REGISTRY}/nvidia-firmware-ext:${FIRMWARE_EXT_TAG}"

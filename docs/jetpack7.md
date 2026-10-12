@@ -14,6 +14,7 @@ kernel faults, and the node cold-booted cleanly after a power loss. CUDA 13 *con
 | | r36 (default) | r39 (`JETPACK=r39`) |
 |---|---|---|
 | nvgpu package | `nvidia-tegra-nvgpu/` (OE4T `patches-r36.5`) | `nvidia-tegra-nvgpu-r39/` (NVIDIA gitlab, tag `jetson_39.2.1`) |
+| Installer image | `custom-installer:<talos>-<kernel>-nvgpu5.13.0-drm-noshim` | `custom-installer-jp7:<talos>-<kernel>-nvgpu39.2.1-jp7` |
 | Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-<kernel>-talos` |
 | Firmware extension | `nvidia-firmware-ext:v5` (r36 apt, component `t234`) | `nvidia-firmware-ext:r39-v1` (`scripts/build-r39-firmware.sh`) |
 | Userspace libraries | downloaded on the node (`t234` apt) | downloaded on the node (`som` apt, `manifests/gpu/cdi-setup-r39.yaml`) |
@@ -25,9 +26,15 @@ The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer 
 ## Using it
 
 ```bash
-# CI: Actions -> "Build Extensions" or "Build USB Image" -> choose jetpack = r39
+# CI: a release (tag push, or the auto-tag dispatch after a Talos bump) builds both lines in one run:
+#     r36 first, then r39, which reuses the shared kernel / kernel-modules-clang / base installer.
+#     "Build USB Image" -> jetpack = both (default) | r36 | r39 builds one or both by hand;
+#     "Build Extensions" builds a single line (jetpack = r36 | r39).
 # local: JETPACK=r39 make build-extensions
 ```
+
+Each line publishes its installer to its own repository, so the two never share a tag: r36 keeps
+`custom-installer`, r39 goes to `custom-installer-jp7`. The release notes list both images.
 
 On the node: flash the board's QSPI (below), install the r39 installer image, and apply
 `manifests/gpu/cdi-setup-r39.yaml` instead of `cdi-setup.yaml`. The machine config's kernel module list for
