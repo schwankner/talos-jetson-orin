@@ -196,6 +196,19 @@ jobs:
           docker tag "${LOADED_TAG}" "${INSTALLER_TAG}"
           docker push "${INSTALLER_TAG}"
           echo "✓ Pushed: ${INSTALLER_TAG}"
+
+          # Alias tag: <installer repo>:<talos> (the plain Talos version, for example v1.14.2)
+          # on the same image. Upgrade controllers such as tuppr derive the target image by
+          # swapping the version tag of the node's current install image and verify the node
+          # against that tag, so they need a tag that is exactly the Talos version. The
+          # compound tag above stays the build's identity (kernel, nvgpu). Each JetPack line
+          # has its own installer repository, so an alias never crosses lines: a r39 node
+          # that follows custom-installer-jp7:<talos> cannot be moved to the r36 image.
+          # The alias is mutable: it names the latest build of that Talos version.
+          ALIAS_TAG="ghcr.io/${{ github.repository_owner }}/${INSTALLER_REPO}:${TALOS_VERSION}"
+          docker tag "${INSTALLER_TAG}" "${ALIAS_TAG}"
+          docker push "${ALIAS_TAG}"
+          echo "✓ Pushed alias: ${ALIAS_TAG} -> ${INSTALLER_TAG}"
         env:
           REGISTRY: ghcr.io/${{ github.repository_owner }}
           REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}

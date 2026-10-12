@@ -36,6 +36,13 @@ The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer 
 Each line publishes its installer to its own repository, so the two never share a tag: r36 keeps
 `custom-installer`, r39 goes to `custom-installer-jp7`. The release notes list both images.
 
+Besides the compound tag (`<talos>-<kernel>-nvgpu<nvgpu>`) every full installer also gets the plain Talos version as an
+alias tag in its own repository, for example `custom-installer-jp7:v1.14.2`. Upgrade controllers such as
+[tuppr](https://github.com/home-operations/tuppr) take the node's current install image, swap the tag for the target
+Talos version and verify the node against that version, so a node can follow its line with
+`image: ghcr.io/<owner>/custom-installer-jp7:<talos>` and never cross to the other line. The alias is mutable (the latest
+build of that Talos version); the compound tag stays the build's identity.
+
 On the node: flash the board's QSPI (below), install the r39 installer image, and apply
 `manifests/gpu/cdi-setup-r39.yaml` instead of `cdi-setup.yaml`. The machine config's kernel module list for
 r39 is, in this order: `ivc_ext`, `tegra_hv`, `host1x`, `host1x_nvhost`, `host1x_fence`, `nvhwpm`, `tegra_drm`,
