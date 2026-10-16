@@ -35,21 +35,38 @@ check_registry
 
 KERNEL_ONLY="${KERNEL_ONLY:-0}"
 
-info "=== nvidia-tegra-nvgpu ${NVGPU_VERSION} build ==="
+# The kernel, the in-tree modules (kernel-modules-clang) and the base installer are the same for
+# both JetPack lines: they depend on the Talos version and the kernel config, not on the nvgpu
+# package. A JetPack r39 build therefore reuses the two shared images when both are already in
+# the registry instead of overwriting tags the r36 flow consumes. REBUILD_SHARED=1 forces a
+# rebuild; r36 always rebuilds (unchanged behaviour).
+registry_has() { docker manifest inspect "$1" >/dev/null 2>&1; }
+REUSE_SHARED=0
+if [[ "${JETPACK}" == "r39" && "${REBUILD_SHARED:-0}" != "1" && "${KERNEL_ONLY}" != "1" ]]; then
+  if registry_has "${REGISTRY_DOCKER}/custom-installer:${TALOS_VERSION}-${KERNEL_VERSION}" \
+     && registry_has "${REGISTRY_DOCKER}/kernel-modules-clang:${KERNEL_MODULES_VERSION}-${KERNEL_VERSION}-talos"; then
+    REUSE_SHARED=1
+    info "Shared images (custom-installer base, kernel-modules-clang) already in the registry: reusing them."
+  else
+    info "Shared images not both in the registry yet: building and pushing them."
+  fi
+fi
+
+info "=== ${NVGPU_PKG} ${NVGPU_VERSION} build (JetPack ${JETPACK}) ==="
 info "    Talos ${TALOS_VERSION}, kernel ${KERNEL_VERSION}"
 [[ "${KERNEL_ONLY}" == "1" ]] && info "    Mode: KERNEL_ONLY (skipping nvgpu build)"
 
 # ── Step 1: Ensure signing key is in place BEFORE BuildKit build ───────────────
 # This copies keys/signing_key.pem to:
 #   kernel/build/certs/talos_signing_key.pem  (kernel embeds it via CONFIG_MODULE_SIG_KEY)
-#   nvidia-tegra-nvgpu/signing_key.pem        (nvgpu pkg.yaml signs modules with it)
+#   ${NVGPU_PKG}/signing_key.pem        (nvgpu pkg.yaml signs modules with it)
 # CONFIG_MODULE_SIG_KEY="certs/talos_signing_key.pem" ensures make never auto-overwrites it.
 info "Step 1: Setting up signing keys (serial: $(openssl x509 -in ${REPO_ROOT}/keys/signing_key.x509 -inform DER -noout -serial 2>/dev/null | cut -d= -f2))..."
 bash "$(dirname "$0")/setup-keys.sh"
 
 # ── Step 2: Verify talos-pkgs is set up ──────────────────────────────────────
-[[ -d "${TALOS_PKGS_DIR}/nvidia-tegra-nvgpu" ]] \
-  || error "talos-pkgs not found at ${TALOS_PKGS_DIR}. Clone siderolabs/pkgs@a92bed5 there first."
+[[ -d "${TALOS_PKGS_DIR}/${NVGPU_PKG}" ]] \
+  || error "${NVGPU_PKG}/ not found in ${TALOS_PKGS_DIR}. Clone siderolabs/pkgs there and copy the package directory in first."
 [[ -f "${TALOS_PKGS_DIR}/Pkgfile" ]] \
   || error "Pkgfile missing from ${TALOS_PKGS_DIR}."
 [[ -f "${TALOS_PKGS_DIR}/kernel/build/config-arm64" ]] \
@@ -95,9 +112,14 @@ if [[ -n "${CACHE_REGISTRY}" ]]; then
   )
   # Kernel cache (mode=max): populated by the nvgpu build via --cache-to so all
   # intermediate kernel layers are available as cache hits for subsequent builds.
-  CACHE_TO_KERNEL=(
-    "--cache-to" "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_KERNEL},mode=max"
-  )
+  # SKIP_KERNEL_CACHE_EXPORT=1 leaves this empty: the mode=max export of every kernel layer
+  # (several GB) coincided with a CI runner losing contact once, so the r39 workflow does
+  # not export it.
+  if [[ "${SKIP_KERNEL_CACHE_EXPORT:-0}" != "1" ]]; then
+    CACHE_TO_KERNEL=(
+      "--cache-to" "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_KERNEL},mode=max"
+    )
+  fi
   # kernel-modules-clang cache: reuses kernel cache as --cache-from (no kernel rebuild),
   # then caches its own small final layer with mode=min.
   CACHE_FROM_KM_CLANG=(
@@ -114,14 +136,14 @@ fi
 
 # ── Step 3: BuildKit build — nvidia-tegra-nvgpu (skip in KERNEL_ONLY mode) ────
 if [[ "${KERNEL_ONLY}" != "1" ]]; then
-  info "Step 2: Building nvidia-tegra-nvgpu (cold: ~90 min / cached kernel: ~20 min)..."
+  info "Step 2: Building ${NVGPU_PKG} (cold: ~90 min / cached kernel: ~20 min)..."
   info "    Log: ${BUILD_LOG}"
   mkdir -p "${NVGPU_OUT_DIR}"
 
   docker buildx build \
     --builder talos-builder \
     --file Pkgfile \
-    --target nvidia-tegra-nvgpu \
+    --target "${NVGPU_PKG}" \
     --platform linux/arm64 \
     "${CACHE_FROM_NVGPU[@]+"${CACHE_FROM_NVGPU[@]}"}" \
     "${CACHE_TO_NVGPU[@]+"${CACHE_TO_NVGPU[@]}"}" \
@@ -141,6 +163,9 @@ fi
 # during kernel-build) into an OCI extension. Reuses the cached kernel-build
 # layers populated by Step 2 above, so this should take only a few minutes.
 # Run unconditionally — even in KERNEL_ONLY mode the modules change with the kernel.
+if [[ "${REUSE_SHARED}" == "1" ]]; then
+info "Step 3: Skipped (reusing kernel-modules-clang from the registry)"
+else
 info "Step 3: Building kernel-modules-clang ${KERNEL_MODULES_VERSION} (in-tree Clang modules)..."
 info "    Log: ${BUILD_LOG}"
 mkdir -p "${KERNEL_MODULES_OUT_DIR}"
@@ -159,6 +184,7 @@ docker buildx build \
   || error "kernel-modules-clang: no modules directory found in build output!"
 KM_COUNT=$(find "${KERNEL_MODULES_OUT_DIR}/rootfs/usr/lib/modules" -name "*.ko" | wc -l)
 info "    kernel-modules-clang: ${KM_COUNT} modules packaged"
+fi
 
 # ── Step 4: Extract vmlinuz + signing key from nvgpu build output ─────────────
 # vmlinuz.efi and the signing key are now exported by the nvgpu build itself
@@ -199,9 +225,12 @@ info "    Key verified: kernel serial ${KERNEL_KEY_SERIAL} matches keys/signing_
 # from this image to build custom-imager. The imager's `installer` output re-adds
 # the kernel from its own input (custom-imager's /usr/install/arm64/vmlinuz), so
 # the final installer always carries the same signed kernel as the nvgpu modules.
+if [[ "${REUSE_SHARED}" == "1" ]]; then
+info "Step 5: Skipped (reusing the custom-installer base image from the registry)"
+else
 info "Step 5: Rebuilding custom-installer (installer-base + new vmlinuz)..."
 INSTALLER_BUILD_DIR=$(mktemp -d)
-trap 'rm -rf "${INSTALLER_BUILD_DIR}"' EXIT
+trap 'rm -rf "${INSTALLER_BUILD_DIR:-}"' EXIT
 
 cp "${VMLINUZ_SRC}" "${INSTALLER_BUILD_DIR}/vmlinuz.efi"
 printf 'FROM ghcr.io/siderolabs/installer-base:%s\nCOPY vmlinuz.efi /usr/install/arm64/vmlinuz.efi\n' \
@@ -214,12 +243,18 @@ docker buildx build \
   "${INSTALLER_BUILD_DIR}/"
 
 info "    custom-installer pushed: ${REGISTRY_DOCKER}/custom-installer:${TALOS_VERSION}-${KERNEL_VERSION}"
+fi
 
 # ── Step 6: Package nvgpu as OCI extension (skip in KERNEL_ONLY mode) ──────────
 if [[ "${KERNEL_ONLY}" != "1" ]]; then
   info "Step 5: Packaging nvidia-tegra-nvgpu:${NVGPU_VERSION}-${KERNEL_VERSION}-talos..."
+  if [[ "${JETPACK}" == "r39" ]]; then
+    NVGPU_DESCRIPTION="NVIDIA nvgpu GPU driver for Jetson Orin, JetPack 7.2 / r39.2.1 sources (Clang build)"
+  else
+    NVGPU_DESCRIPTION="NVIDIA nvgpu GPU driver for Jetson Orin NX (OE4T patches-r36.5, Clang build)"
+  fi
   EXT_BUILD_DIR=$(mktemp -d)
-  trap 'rm -rf "${INSTALLER_BUILD_DIR}" "${EXT_BUILD_DIR}"' EXIT
+  trap 'rm -rf "${INSTALLER_BUILD_DIR:-}" "${EXT_BUILD_DIR:-}"' EXIT
 
   cat > "${EXT_BUILD_DIR}/manifest.yaml" << EOF
 version: v1alpha1
@@ -227,7 +262,7 @@ metadata:
   name: nvidia-tegra-nvgpu
   version: ${NVGPU_VERSION}-${KERNEL_VERSION}-talos
   author: custom-build
-  description: NVIDIA nvgpu GPU driver for Jetson Orin NX (OE4T patches-r36.5, Clang build)
+  description: ${NVGPU_DESCRIPTION}
   compatibility:
     talos:
       version: ">= 1.12.6"
@@ -253,9 +288,12 @@ else
 fi
 
 # ── Step 6: Package kernel-modules-clang as OCI extension ─────────────────────
+if [[ "${REUSE_SHARED}" == "1" ]]; then
+info "Step 6: Skipped (reusing kernel-modules-clang from the registry)"
+else
 info "Step 6: Packaging kernel-modules-clang:${KERNEL_MODULES_VERSION}-${KERNEL_VERSION}-talos..."
 KM_BUILD_DIR=$(mktemp -d)
-trap 'rm -rf "${INSTALLER_BUILD_DIR}" "${EXT_BUILD_DIR:-}" "${KM_BUILD_DIR}"' EXIT
+trap 'rm -rf "${INSTALLER_BUILD_DIR:-}" "${EXT_BUILD_DIR:-}" "${KM_BUILD_DIR:-}"' EXIT
 
 cat > "${KM_BUILD_DIR}/manifest.yaml" << EOF
 version: v1alpha1
@@ -284,6 +322,7 @@ docker buildx build \
   "${KM_BUILD_DIR}/"
 
 info "    kernel-modules-clang pushed: ${REGISTRY_DOCKER}/kernel-modules-clang:${KERNEL_MODULES_VERSION}-${KERNEL_VERSION}-talos"
+fi
 
 # ── Done ────────────────────────────────────────────────────────────────────────
 info ""

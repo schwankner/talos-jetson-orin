@@ -42,7 +42,9 @@ jobs:
               && echo "OK: $f" || { echo "FAIL: $f"; exit 1; }
           done
 
-      - name: Validate nvidia-tegra-nvgpu/pkg.yaml
+      - name: Validate nvidia-tegra-nvgpu/pkg.yaml and nvidia-tegra-nvgpu-r39/pkg.yaml
         run: |
-          python3 -c "import yaml, sys; yaml.safe_load(open('nvidia-tegra-nvgpu/pkg.yaml'))" \
-            && echo "OK: nvidia-tegra-nvgpu/pkg.yaml"
+          for f in nvidia-tegra-nvgpu/pkg.yaml nvidia-tegra-nvgpu-r39/pkg.yaml; do
+            python3 -c "import yaml, sys; yaml.safe_load(open('$f'))" \
+              && echo "OK: $f" || { echo "FAIL: $f"; exit 1; }
+          done
