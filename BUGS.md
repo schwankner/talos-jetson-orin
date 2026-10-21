@@ -1166,42 +1166,66 @@ a false positive) and `NVMAP_CONFIG_SCIIPC=n`, because the OE4T default for 5.10
 and pulls in unresolved `NvSciIpc*` symbols. Build 34380293058: all ten modules exactly the same
 size as in 5.12.0, same paths, same softdep file.
 
-## Bug 25 — Same-Version `talosctl upgrade` Never Boots the New UKI on Jetson UEFI (Reports Success Anyway)
+## Bug 25 — `talosctl upgrade` Boots the Old UKI Because a Failed kexec Reverts the Boot Entry (Reports Success Anyway)
 
-**Symptom**: `talosctl upgrade --image ...custom-installer:v1.14.0-...-nvgpu5.12.0-drm-noshim --wait`
-finishes with `post check passed`, the node comes back Ready, but `talosctl get extensions` still
-shows the previous extension (5.11.1). Three runs, identical result.
+**Symptom**: `talosctl upgrade --wait` finishes with `post check passed` and the node comes back
+Ready, but it still runs the previous image: `talosctl get extensions` shows the old extension, or
+`talosctl version` the old Talos. It hits extension-only upgrades (same Talos version, new UKI named
+`Talos-vX.Y.Z~N.efi`) and normal version upgrades alike.
 
-**Analysis**: The Talos version stays v1.14.0, so the installer cannot name the new UKI
-`Talos-v1.14.0.efi` (that file is the running one). `generateNextUKIName()` in
-`bootloader/sdboot/sdboot.go` writes it as `Talos-v1.14.0~N.efi` and points the EFI variable
-`LoaderEntryDefault` at it. systemd-boot orders entries with `strverscmp_improved`, where `~`
-means "pre-release", so without an effective default the bare name always wins over `~N`.
-Polling the variable once per second around the upgrade showed the write does reach the kernel
-(`Talos-v1.14.0~4.efi` visible in efivarfs at 13:51:03), but after the reboot the firmware
-(Jetson UEFI `36.4.3-gcid-38968081`) reports the old value `Talos-v1.14.0.efi` again: the runtime
-write of this non-volatile variable is not persisted. sd-boot therefore boots the old UKI, Talos
-sees a healthy node and `DropUpgradeFallbackController` removes the META upgrade tag, so nothing
-ever complains. An A/B run with the known-good 5.11.1 installer behaves identically, so this is
-firmware behaviour, not the new extension. Earlier version upgrades (1.13 → 1.14) only worked
-because the new version sorts first.
+**Root cause** (found by @mmalyska with shipped Talos logs in
+[siderolabs/talos#14692](https://github.com/siderolabs/talos/issues/14692), confirmed on this node):
+after the installer has written the new UKI and pointed `LoaderEntryDefault` at it, the reboot
+sequence runs its `kexec` phase. On Jetson Orin `kexec_file_load` fails:
 
-**Consequences / workaround**:
-- The new UKI has to be selected once by hand in the sd-boot menu (5 s timeout, keyboard on the
-  UEFI console); it is the second `Talos v1.14.0` entry. After that the node runs the new extension.
-- A second upgrade run from that boot does **not** make it automatic. Measured on the running node:
-  the upgrade first repoints the default to the booted entry (`talos-v1.14.0~4.efi`, because the
-  stale default differed) and that write **did** survive the reboot, while the final write naming
-  the freshly installed `Talos-v1.14.0~5.efi` did **not** — sd-boot listed `~5` first but the
-  persisted default still said `~4`, so it booted `~4` again. On this firmware the last variable
-  write before a reset is the one that gets lost, so every extension-only upgrade needs the manual
-  menu selection.
-- `talosctl upgrade --wait` reports `post check passed` regardless; always verify with
-  `talosctl get extensions` and
-  `talosctl read /sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`.
-- Upstream ideas: write `default Talos-vX~N.efi` into `loader.conf` on the EFI partition (which is
-  a file and does persist), or delete the superseded UKI so a stale default matches no file and
-  sd-boot falls back to its own ordering, which already puts the highest `~N` first.
+```
+kexec_file(Image): Could not find any suitable kernel location!
+task kexecPrepare (1/1): failed: failed to load kernel for kexec: error loading kernel for kexec: cannot assign requested address
+reboot failed: error running phase 13 in reboot sequence
+```
+
+`machined` treats the failed reboot sequence as a failed boot and calls `revertBootloader()`, and
+`sdboot.Revert()` writes the previous UKI back into `LoaderEntryDefault`. The firmware reboot then
+boots the old image. That image is healthy, so `DropUpgradeFallbackController` clears the upgrade
+tag and nothing reports a problem. Talos already skips kexec quietly for `ENOSYS`, `EPERM` (disabled
+via sysctl) and `EBUSY`; the arm64 `EADDRNOTAVAIL` case is missing. A fix is proposed upstream in
+[siderolabs/talos#14695](https://github.com/siderolabs/talos/pull/14695).
+
+**Correction**: earlier versions of this entry blamed the Jetson UEFI for not persisting the runtime
+write of `LoaderEntryDefault`. That was wrong. Talos rewrote the variable itself; the machined log
+lines that show it are lost on the reboot, which is why the first analysis missed the revert. The
+firmware persists EFI variable writes fine, as run 2 below shows.
+
+**Evidence on this node** (Orin NX 16 GB, reComputer J4012, UEFI `36.4.3-gcid-38968081`, Talos
+v1.14.0, same-version upgrade with the running installer, 2026-10-21):
+
+| Run | kexec | Installer wrote | Booted after the reboot |
+|---|---|---|---|
+| 1 | enabled (default) | `Talos-v1.14.0~6.efi` | `Talos-v1.14.0~4.efi` (reverted) |
+| 2 | `kernel.kexec_load_disabled=1` | `Talos-v1.14.0~7.efi` | `Talos-v1.14.0~7.efi` |
+
+mmalyska saw the same on r39.2 firmware (`39.2.0-gcid-45755727`), including a v1.14.2 to v1.14.4
+upgrade, and confirmed both workarounds below.
+
+**Workaround** (pick one):
+- Disable kexec on the Jetson node. `manifests/talos/machine-patch.yaml` does this:
+  ```yaml
+  machine:
+    sysctls:
+      kernel.kexec_load_disabled: "1"
+  ```
+  On a running node it applies without a reboot:
+  ```bash
+  talosctl patch machineconfig -n <jetson-ip> --patch '{"machine":{"sysctls":{"kernel.kexec_load_disabled":"1"}}}'
+  ```
+  Upgrades then reboot through the firmware into the new entry, which only costs the firmware POST.
+- Or pass `--reboot-mode powercycle` to every `talosctl upgrade`.
+
+**Recovery** if a node already came back on the old image: apply the sysctl and run the same upgrade
+again, or select the newest `Talos-v...` entry once in the sd-boot menu at boot.
+
+Until the upstream fix lands, `talosctl upgrade --wait` reports success either way, so verify every
+upgrade with `talosctl get extensions` and `talosctl version`.
 
 **Validation (2026-09-09)**: after selecting `talos-v1.14.0~4.efi` once in the sd-boot menu the node
 ran extension 5.12.0: `/dev/dri` card0/card1/renderD128, all ten OOT modules loaded with new

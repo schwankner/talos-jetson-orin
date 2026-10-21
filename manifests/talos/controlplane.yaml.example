@@ -99,6 +99,10 @@ machine:
         #     size: 4GB # Disk size.
         #     model: WDC* # Disk model `/sys/block/<dev>/device/model`.
         #     busPath: /pci0000:00/0000:00:17.0/ata1/host0/target0:0:0/0:0:0:0 # Disk bus path.
+    # kexec_file_load fails on Jetson Orin and Talos then reverts upgrades to the
+    # previous UKI (BUGS.md Bug 25); with kexec disabled the firmware reboot boots the new one.
+    sysctls:
+        kernel.kexec_load_disabled: "1"
     # Features describe individual Talos features that can be switched on or off.
     features:
         diskQuotaSupport: true # Enable XFS project quota support for EPHEMERAL partition and user disks.

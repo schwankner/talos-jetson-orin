@@ -16,6 +16,11 @@
 #     --config-patch @manifests/talos/machine-patch-cdi.yaml \
 #     --mode=no-reboot
 machine:
+  # kexec_file_load fails on Jetson Orin, and Talos then reverts an upgrade to the
+  # previous UKI while reporting success (BUGS.md Bug 25). With kexec disabled the
+  # upgrade reboots through the firmware into the new image.
+  sysctls:
+    kernel.kexec_load_disabled: "1"
   install:
     disk: /dev/nvme0n1
     image: ghcr.io/schwankner/custom-installer:v1.14.2-6.18.54-nvgpu5.13.0-drm-noshim
