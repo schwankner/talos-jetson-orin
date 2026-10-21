@@ -45,12 +45,33 @@ data:
     #!/bin/sh
     set -e
     DEST=/nvidia-libs/tegra
+    COMPAT_DEST=/nvidia-libs/compat-orin
     CUDA_LIB="${DEST}/libcuda.so.1.1"
     MIN_SIZE=1000000   # real libcuda.so.1.1 is ~41 MB; 0-byte stubs are 0
+    # Bump LAYOUT whenever the installed file set changes, so existing nodes reinstall.
+    # 2: SONAME symlinks are copied too (libnvidia-ptxjitcompiler.so.1 was missing,
+    #    which broke every PTX JIT compile with CUDA_ERROR_JIT_COMPILER_NOT_FOUND).
+    LAYOUT=2
+
+    # Optional CUDA forward compatibility (CUDA_COMPAT=13.2): NVIDIA's cuda-compat-orin
+    # user-mode driver runs on top of the r36.5 BSP and lets CUDA 13 applications use
+    # the GPU. Empty (default) keeps the stock r36.5 driver (CUDA 12.6).
+    CUDA_COMPAT="${CUDA_COMPAT:-}"
+    COMPAT_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/cuda-compat-orin-13-2_13.2.44429113-1_arm64.deb"
+    COMPAT_SHA256="bec8a8981b18e118f99fb2fca0eaab759e1f59e5833132e71f43656af544976d"
+
+    compat_ok() {
+      if [ "${CUDA_COMPAT}" = "13.2" ]; then
+        [ "$(cat "${COMPAT_DEST}/.version" 2>/dev/null)" = "${COMPAT_SHA256}" ]
+      else
+        [ ! -e "${COMPAT_DEST}" ]
+      fi
+    }
 
     if [ -f "${CUDA_LIB}" ] && \
-       [ "$(stat -c%s "${CUDA_LIB}" 2>/dev/null || echo 0)" -gt "${MIN_SIZE}" ]; then
-      echo "JetPack r36.5 libs already present ($(ls "${DEST}" | wc -l) files). Skipping."
+       [ "$(stat -c%s "${CUDA_LIB}" 2>/dev/null || echo 0)" -gt "${MIN_SIZE}" ] && \
+       [ "$(cat "${DEST}/.layout" 2>/dev/null)" = "${LAYOUT}" ] && compat_ok; then
+      echo "JetPack r36.5 libs already present ($(ls "${DEST}" | wc -l) files, layout ${LAYOUT}, compat='${CUDA_COMPAT}'). Skipping."
       exit 0
     fi
 
@@ -75,12 +96,27 @@ data:
       find "/tmp/extract-${pkg}" \
         \( -path '*/aarch64-linux-gnu/tegra/*' \
         -o -path '*/aarch64-linux-gnu/nvidia/*' \) \
-        -type f -exec cp {} "${DEST}/" \;
+        \( -type f -o -type l \) -exec cp -P {} "${DEST}/" \;
       rm -rf "/tmp/extract-${pkg}/" "${pkg}"
     done
 
     # Ensure libcuda.so.1 symlink exists
     ln -sf libcuda.so.1.1 "${DEST}/libcuda.so.1" 2>/dev/null || true
+
+    echo "${LAYOUT}" > "${DEST}/.layout"
+
+    rm -rf "${COMPAT_DEST}"
+    if [ "${CUDA_COMPAT}" = "13.2" ]; then
+      echo "Installing CUDA 13.2 forward compatibility (cuda-compat-orin)..."
+      curl -fsSL -o compat.deb "${COMPAT_URL}"
+      echo "${COMPAT_SHA256}  compat.deb" | sha256sum -c -
+      dpkg-deb -x compat.deb /tmp/extract-compat/
+      mkdir -p "${COMPAT_DEST}"
+      cp -a /tmp/extract-compat/usr/local/cuda-13.2/compat_orin/. "${COMPAT_DEST}/"
+      echo "${COMPAT_SHA256}" > "${COMPAT_DEST}/.version"
+      rm -rf /tmp/extract-compat compat.deb
+      echo "  compat libcuda.so.1.1 : $(stat -c%s "${COMPAT_DEST}/libcuda.so.1.1") bytes"
+    fi
 
     echo "Done. $(ls "${DEST}" | wc -l) libs installed."
     echo "  libcuda.so.1.1 : $(stat -c%s "${DEST}/libcuda.so.1.1" 2>/dev/null || echo MISSING) bytes"
@@ -132,6 +168,13 @@ data:
           printf '        - path: /dev/nvmap\n          permissions: rw\n'
         fi
 
+        # /dev/host1x-fence: sync fences of the OE4T host1x-fence module. libnvrm_host1x
+        # opens it; the CUDA 13 compat libcuda (cuda-compat-orin) links libnvrm_host1x
+        # and libnvrm_sync, unlike the r36.5 libcuda, so it is needed for CUDA 13.
+        if [ -c /dev/host1x-fence ]; then
+          printf '        - path: /dev/host1x-fence\n          permissions: rw\n'
+        fi
+
         # /dev/nvhost-ctrl: only inject when it is a real char device (shim loaded).
         # The fallback symlink created when shim is absent (→ /dev/nvgpu/igpu0/ctrl)
         # must NOT be injected: CDI rejects symlinks with "not a device node".
@@ -152,9 +195,18 @@ data:
         echo '        - hostPath: /var/lib/nvidia-tegra-libs/tegra'
         echo '          containerPath: /usr/lib/aarch64-linux-gnu/nvidia'
         echo '          options: [ro, bind]'
+        LIBPATH="/usr/lib/aarch64-linux-gnu/nvidia:/usr/local/cuda/lib:/usr/local/cuda/lib64:/usr/local/cuda/compat"
+        # CUDA_COMPAT=13.2 in restore-libs: the CUDA 13.2 user-mode driver goes first.
+        # The pod's own LD_LIBRARY_PATH cannot do this, CDI env overrides it.
+        if [ -f /host-var/lib/nvidia-tegra-libs/compat-orin/libcuda.so.1.1 ]; then
+          echo '        - hostPath: /var/lib/nvidia-tegra-libs/compat-orin'
+          echo '          containerPath: /usr/local/cuda-compat-orin'
+          echo '          options: [ro, bind]'
+          LIBPATH="/usr/local/cuda-compat-orin:${LIBPATH}"
+        fi
         echo '      env:'
-        echo '        # Prepend r36.5 libs so they shadow any 0-byte stubs in the image.'
-        echo '        - "LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/usr/local/cuda/lib:/usr/local/cuda/lib64:/usr/local/cuda/compat"'
+        echo '        # Prepend the JetPack libs so they shadow any 0-byte stubs in the image.'
+        echo "        - \"LD_LIBRARY_PATH=${LIBPATH}\""
         # containerEdits at spec root must be an object (ContainerEdits), not an
         # array.  Omit it entirely — it is optional and defaults to empty.
         # (Writing 'containerEdits: []' causes containerd to reject the spec with
@@ -234,6 +286,11 @@ spec:
         - name: restore-libs
           image: ubuntu:22.04
           command: ["/bin/bash", "/scripts/restore-libs.sh"]
+          env:
+            # "13.2" installs NVIDIA's CUDA 13.2 forward-compatibility driver
+            # (cuda-compat-orin) for all GPU containers; empty keeps CUDA 12.6.
+            - name: CUDA_COMPAT
+              value: ""
           securityContext:
             privileged: true
           volumeMounts:

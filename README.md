@@ -185,8 +185,45 @@ When a pod requests it, containerd reads the CDI spec and injects devices + libs
 - `/dev/nvgpu/igpu0/*` — GPU command submission channels
 - `/dev/dri/renderD128` — DRM render node (required for `cuInit`)
 - `/dev/nvmap` — GPU memory allocator
+- `/dev/host1x-fence` — host1x sync fences (needed by the CUDA 13 compat driver)
 - `/var/lib/nvidia-tegra-libs/tegra` → `/usr/lib/aarch64-linux-gnu/nvidia` (JetPack r36.5 libs)
 - `LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:...`
+
+The CDI `LD_LIBRARY_PATH` overrides one set in the pod spec, so library selection is a node-level
+setting in the DaemonSet, not a per-pod one.
+
+### CUDA 13 (optional)
+
+The default driver is the JetPack r36.5 `libcuda` (CUDA 12.6). NVIDIA's CUDA forward-compatibility
+package `cuda-compat-orin-13-2` runs a CUDA 13.2 user-mode driver on top of the same r36.5 BSP and
+kernel modules, so CUDA 13 applications work without a new extension. To turn it on for all GPU
+containers on the node, set `CUDA_COMPAT` in the `restore-libs` init container of
+[`manifests/gpu/cdi-setup.yaml`](manifests/gpu/cdi-setup.yaml):
+
+```yaml
+          env:
+            - name: CUDA_COMPAT
+              value: "13.2"
+```
+
+```bash
+kubectl apply -f manifests/gpu/cdi-setup.yaml
+kubectl -n nvidia-system rollout restart ds/nvidia-cdi-setup
+```
+
+`restore-libs` downloads the pinned package (`13.2.44429113`, sha256-checked) into
+`/var/lib/nvidia-tegra-libs/compat-orin`, and the CDI spec mounts it at `/usr/local/cuda-compat-orin`
+in front of the r36.5 libs. Setting the value back to `""` removes it again. The compat driver keeps
+using the r36.5 `libnvcucompat.so`; the one from L4T r39 makes `cuInit` fail with 801.
+
+Tested on the Orin NX 16 GB (2026-10-21):
+
+| | Default | `CUDA_COMPAT=13.2` |
+|---|---|---|
+| `cuDriverGetVersion` | 12060 | 13020 |
+| PTX JIT + kernel launch (sm_87), results checked | OK | OK |
+| Ollama 0.20.5 | `library=CUDA driver=12.6` | `library=CUDA driver=13.2` |
+| qwen2.5:0.5b, `num_predict` 200 | 65.4 / 66.4 / 66.1 tok/s | 65.3 / 66.2 / 66.2 tok/s |
 
 ### Power mode
 
