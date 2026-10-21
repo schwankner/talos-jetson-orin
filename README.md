@@ -234,13 +234,14 @@ ghcr.io/schwankner/custom-installer:v1.14.2-6.18.54-nvgpu5.13.0-drm-noshim
 > `UnattendedInstallConfig` and `EtcFileConfig` documents, but still work unchanged; migrating them
 > is tracked separately.
 
-> **Same-version upgrades on Jetson UEFI (Bug 25):** when only the extension changes and the Talos
-> version stays the same, the installer writes the new UKI as `Talos-vX.Y.Z~N.efi` and selects it via
-> the `LoaderEntryDefault` EFI variable. Jetson UEFI 36.4.3 does not persist that runtime write, so
-> sd-boot boots the old UKI and `talosctl upgrade` still reports success. Verify with
-> `talosctl get extensions`; if the old version is still running, pick the highest `~N` entry in the
-> sd-boot menu at boot. This stays necessary for every extension-only upgrade. Details in
-> [BUGS.md](BUGS.md#bug-25--same-version-talosctl-upgrade-never-boots-the-new-uki-on-jetson-uefi-reports-success-anyway).
+> **Upgrades on Jetson Orin need kexec disabled (Bug 25):** `kexec_file_load` fails on this
+> hardware, and Talos then reverts the upgrade to the previous image while `talosctl upgrade` still
+> reports success. `manifests/talos/machine-patch.yaml` sets `kernel.kexec_load_disabled: "1"` to
+> avoid this. On a node installed before that change, apply it once (no reboot needed):
+> `talosctl patch machineconfig -n <jetson-ip> --patch '{"machine":{"sysctls":{"kernel.kexec_load_disabled":"1"}}}'`,
+> or pass `--reboot-mode powercycle` to `talosctl upgrade`. Verify every upgrade with
+> `talosctl get extensions`. Details in
+> [BUGS.md](BUGS.md#bug-25--talosctl-upgrade-boots-the-old-uki-because-a-failed-kexec-reverts-the-boot-entry-reports-success-anyway).
 
 ---
 
