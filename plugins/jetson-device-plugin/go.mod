@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	google.golang.org/grpc v1.85.0
-	k8s.io/kubelet v0.37.1
+	k8s.io/kubelet v0.37.2
 )
 
 require (
