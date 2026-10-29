@@ -1233,3 +1233,23 @@ srcversions, no GPU errors in dmesg, Ollama `library=CUDA compute=8.7`, models 1
 qwen2.5:0.5b 64.7/66.0/66.0 tok/s and qwen3:4b 16.5 tok/s (references 65–66 and 16.4), GPU at
 918 MHz under load. The simplified build is therefore functionally identical to 5.11.1.
 
+## Bug 26 — PTX JIT Fails With `CUDA_ERROR_JIT_COMPILER_NOT_FOUND` (CDI Setup Dropped the SONAME Symlinks)
+
+**Symptom**: `cuModuleLoadData` with PTX returns 221 (`CUDA_ERROR_JIT_COMPILER_NOT_FOUND`) in every
+GPU pod. Precompiled SASS for sm_87 runs fine, which is why Ollama never showed it: its
+`cuda_jetpack6` backend ships SASS for Orin. Anything that JIT-compiles PTX at load time (PyTorch
+extensions, Numba, Triton, CuPy RawKernel, a PTX-only fatbin) fails.
+
+**Root cause**: `libcuda.so.1.1` dlopens `libnvidia-ptxjitcompiler.so.1`. In the L4T packages that
+name is a symlink to `libnvidia-ptxjitcompiler.so.540.5.0`. The `restore-libs` init container of
+`nvidia-cdi-setup` copied the extracted packages with `find ... -type f`, so only regular files
+reached `/var/lib/nvidia-tegra-libs/tegra` and every SONAME symlink was lost.
+
+**Fix**: copy files and symlinks (`\( -type f -o -type l \) -exec cp -P`). A layout marker
+(`/var/lib/nvidia-tegra-libs/tegra/.layout`, now `2`) makes nodes with the old file set reinstall on
+the next DaemonSet restart; before, the init container skipped whenever `libcuda.so.1.1` was present.
+
+**Validation (2026-10-21, Orin NX)**: a ctypes driver API test (PTX for sm_80 JIT-compiled to sm_87,
+4M-element write kernel, results checked, 500 launches) failed with 221 before and passes after the
+fix with driver 12060. Found while testing the optional CUDA 13.2 compat driver (README, "CUDA 13").
+
