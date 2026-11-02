@@ -15,7 +15,7 @@ CACHE_REGISTRY="${CACHE_REGISTRY:-}"  # set to ghcr.io/<owner>/build-cache in CI
 
 # ── Talos version ────────────────────────────────────────────────────────────
 # Tracked by Renovate — update-talos.yaml is no longer used (removed).
-TALOS_VERSION="${TALOS_VERSION:-v1.14.3}"
+TALOS_VERSION="${TALOS_VERSION:-v1.15.0-alpha.2}"  # TEST: pkgs#1518 @3dbeba8 on Linux 7.3, do not merge
 
 # ── siderolabs/pkgs pin — derived from TALOS_VERSION ─────────────────────────
 # Talos records the exact pkgs commit it was built against in its own
@@ -29,7 +29,7 @@ if [ -z "${PKGS_COMMIT:-}" ]; then
     | grep '^PKGS ?=' | sed -E 's/^PKGS \?= .*-g([0-9a-f]+)$/\1/')"
   [ -z "${PKGS_COMMIT}" ] && { echo "[ERROR] Could not derive PKGS_COMMIT from Talos ${TALOS_VERSION} Makefile" >&2; exit 1; }
 fi
-PKGS_BRANCH="${PKGS_BRANCH:-release-$(echo "${TALOS_VERSION}" | sed 's/^v//' | cut -d. -f1,2)}"
+PKGS_BRANCH="${PKGS_BRANCH:-main}"  # TEST: v1.15 has no release branch yet
 
 # ── Kernel version — derived automatically from siderolabs/pkgs ──────────────
 # Reads linux_version from the PINNED PKGS_COMMIT (not the branch HEAD!) so
@@ -45,13 +45,16 @@ if [ -z "${KERNEL_VERSION:-}" ]; then
   [ -z "${KERNEL_VERSION}" ] && { echo "[ERROR] Could not determine kernel version from pkgs@${PKGS_COMMIT}" >&2; exit 1; }
 fi
 
+# TEST: pkgs linux_version is "7.3", but kernel.release (module dir) is 7.3.0
+KERNEL_VERSION="7.3.0"
+
 # ── LLVM (Talos 1.13+) ──────────────────────────────────────────────────────
 # LLVM_IMAGE and TOOLS_REV are defined in siderolabs/pkgs/Pkgfile (release-1.13+)
 # and used directly by nvidia-tegra-nvgpu/pkg.yaml. No injection into Pkgfile needed.
 LLVM_IMAGE="${LLVM_IMAGE:-ghcr.io/siderolabs/llvm}"  # informational only
 
 # ── Extension versions ───────────────────────────────────────────────────────
-NVGPU_VERSION="${NVGPU_VERSION:-5.13.0-drm-noshim}" # OE4T DRM stack (tegra-drm + host1x-nvhost + nvhwpm) → /dev/dri/renderD128 → CUDA; 5.13: only the three source patches conftest cannot cover, no -Wno flags
+NVGPU_VERSION="${NVGPU_VERSION:-5.13.0-pr1518-3dbeba8}" # OE4T DRM stack (tegra-drm + host1x-nvhost + nvhwpm) → /dev/dri/renderD128 → CUDA; 5.13: only the three source patches conftest cannot cover, no -Wno flags
 FIRMWARE_EXT_TAG="${FIRMWARE_EXT_TAG:-v5}"        # v1 / v2 / v3 / v4 / v5 (pmu_pkc_prod_sig.bin added)
 KERNEL_MODULES_VERSION="${KERNEL_MODULES_VERSION:-1.3.0}"
 
