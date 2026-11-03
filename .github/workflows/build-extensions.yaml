@@ -115,6 +115,23 @@ jobs:
              /tmp/talos-pkgs/kernel-modules-clang/pkg.yaml
           echo "✓ kernel-modules-clang/pkg.yaml injected"
 
+          # TEST ONLY: apply kernel-test-patches/ in kernel-prepare (pkgs has no kernel patch hook)
+          if ls "${GITHUB_WORKSPACE}"/kernel-test-patches/*.patch >/dev/null 2>&1; then
+            mkdir -p /tmp/talos-pkgs/kernel/prepare/patches
+            cp "${GITHUB_WORKSPACE}"/kernel-test-patches/*.patch /tmp/talos-pkgs/kernel/prepare/patches/
+            python3 - /tmp/talos-pkgs/kernel/prepare/pkg.yaml <<'EOF'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          anchor = "tar -xJf linux.tar.xz --strip-components=1 -C /src\n"
+          assert s.count(anchor) == 1, "kernel-prepare anchor not found"
+          s = s.replace(anchor, anchor + "        for p in /pkg/patches/*.patch; do patch -p1 -d /src < \"$p\"; done\n")
+          open(p, "w").write(s)
+          EOF
+            grep -n 'patch' /tmp/talos-pkgs/kernel/prepare/pkg.yaml
+            echo "✓ kernel test patches injected: $(ls /tmp/talos-pkgs/kernel/prepare/patches/)"
+          fi
+
           # Note: LLVM_IMAGE and TOOLS_REV are already defined in siderolabs/pkgs
           # Pkgfile (release-1.13+) — no injection needed. nvidia-tegra-nvgpu/pkg.yaml
           # references {{ .LLVM_IMAGE }}:{{ .TOOLS_REV }} directly from the Pkgfile vars.

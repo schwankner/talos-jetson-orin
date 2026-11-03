@@ -54,7 +54,7 @@ KERNEL_VERSION="7.3.0"
 LLVM_IMAGE="${LLVM_IMAGE:-ghcr.io/siderolabs/llvm}"  # informational only
 
 # ── Extension versions ───────────────────────────────────────────────────────
-NVGPU_VERSION="${NVGPU_VERSION:-5.13.0-pr1518-3dbeba8}" # OE4T DRM stack (tegra-drm + host1x-nvhost + nvhwpm) → /dev/dri/renderD128 → CUDA; 5.13: only the three source patches conftest cannot cover, no -Wno flags
+NVGPU_VERSION="${NVGPU_VERSION:-5.13.0-pr1518-3dbeba8-hidrev}" # OE4T DRM stack (tegra-drm + host1x-nvhost + nvhwpm) → /dev/dri/renderD128 → CUDA; 5.13: only the three source patches conftest cannot cover, no -Wno flags
 FIRMWARE_EXT_TAG="${FIRMWARE_EXT_TAG:-v5}"        # v1 / v2 / v3 / v4 / v5 (pmu_pkc_prod_sig.bin added)
 KERNEL_MODULES_VERSION="${KERNEL_MODULES_VERSION:-1.3.0}"
 
