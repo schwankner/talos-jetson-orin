@@ -175,7 +175,8 @@ the same ABI — the module loads, the DRM render node appears, CUDA works.
 
 The `nvidia-cdi-setup` DaemonSet:
 1. Downloads real JetPack r36.5 userspace libs from NVIDIA's public APT (`libcuda.so.1.1` = 41 MB)
-2. Copies GPU firmware to NVMe (avoids `-ETXTBSY` on squashfs inodes)
+2. Syncs GPU firmware to NVMe (avoids `-ETXTBSY` on squashfs inodes); runs on every start, so an
+   updated firmware extension replaces the old copies in `/var/fw-fresh` (BUGS.md, Bug 27)
 3. Writes `/var/run/cdi/nvidia-jetson.yaml` — the CDI spec containerd reads per pod
 
 The `nvidia-device-plugin` exposes `nvidia.com/gpu: 1` as a Kubernetes extended resource.
