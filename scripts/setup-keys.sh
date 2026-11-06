@@ -21,7 +21,7 @@
 # After running this script the keys are copied to the places BuildKit expects:
 #   1. talos-pkgs/kernel/build/certs/talos_signing_key.{pem,x509}
 #      → CONFIG_MODULE_SIG_KEY="certs/talos_signing_key.pem" embeds it in kernel
-#   2. talos-pkgs/nvidia-tegra-nvgpu/signing_key.{pem,x509}
+#   2. talos-pkgs/<nvgpu package>/signing_key.{pem,x509}  (nvidia-tegra-nvgpu, or nvidia-tegra-nvgpu-r39 with JETPACK=r39)
 #      → nvgpu pkg.yaml signs modules with it
 #
 # Usage:
@@ -35,7 +35,7 @@ KEY_PEM="${KEYS_DIR}/signing_key.pem"
 KEY_X509="${KEYS_DIR}/signing_key.x509"
 
 KERNEL_CERTS_DIR="/tmp/talos-pkgs/kernel/build/certs"
-NVGPU_DIR="/tmp/talos-pkgs/nvidia-tegra-nvgpu"
+NVGPU_DIR="/tmp/talos-pkgs/${NVGPU_PKG}"
 
 # ── 1. Regenerate if explicitly requested ─────────────────────────────────────
 if [[ "${FORCE_NEW_KEY:-0}" == "1" ]]; then
