@@ -108,8 +108,13 @@ steps:
         oot $OOT/drivers/gpu/host1x-fence
         oot $OOT/drivers/gpu/host1x-nvhost
         oot /oot-src/hwpm/drivers/tegra/hwpm
-        # headless: no fbdev (the kernel config has it enabled, so it must be forced off)
-        oot $OOT/drivers/gpu/drm/tegra CONFIG_DRM_FBDEV_EMULATION=n
+        # headless: no fbdev (the kernel config has it enabled, so it must be forced off), and
+        # no display code (dc, hub, sor, ...): the Orin display is driven by nvdisplay, not by
+        # tegra-drm, and that code does not build on Linux 7.3. CONFIG_DRM_TEGRA_HAVE_DISPLAY only
+        # guards tegra-drm internals and one host1x prototype, so tegra-drm can leave it off while
+        # host1x keeps it (same headless tegra-drm as the r36 package).
+        oot $OOT/drivers/gpu/drm/tegra CONFIG_DRM_FBDEV_EMULATION=n \
+          CONFIG_DRM_TEGRA_HAVE_DISPLAY= KCFLAGS="${KCFLAGS/-DCONFIG_DRM_TEGRA_HAVE_DISPLAY/}"
         # The OE4T defaults are handle-as-id and NvSciIpc support, neither is wanted here (r36
         # setting, known to work with the r36 userspace). Without NvSciIpc, nvmap_sci_ipc.c is
         # not built; patch 0002 supplies inline no-op stubs for the IVC functions it would define,
