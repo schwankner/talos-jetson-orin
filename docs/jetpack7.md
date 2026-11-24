@@ -126,6 +126,12 @@ Without `--qspi-only` the tool also generates and flashes GPT, ESP and rootfs im
 with `--no-flash` first, check that `images/external` is not created and that `tegra234-carveouts.dtbo` is in the
 overlay list. The flash host needs an x86-64 Ubuntu 22.04/24.04 (it serves NFS to the board over USB).
 
+**First boot after the flash: use a cold boot.** On a reComputer J401 with UEFI r39.2.0, the warm reboot that ends
+`l4t_initrd_flash.sh` came up without the NVMe: UEFI tried HTTP boot and dropped to the UEFI shell. After a full
+power cycle (recovery jumper and USB cable removed, then power off and on) the NVMe booted directly, with no boot
+entry set by hand. If the board lands in the UEFI shell after the flash, power-cycle it before looking at the boot
+entries.
+
 r36 modules also loaded on the r39 firmware and device tree in a test (the media engines log `failed to
 register host1x actmon`), so flashing does not immediately break an r36 image, but do not rely on it.
 
@@ -137,6 +143,12 @@ register host1x actmon`), so flashing does not immediately break an r36 image, b
   most; the installer fails with `no space left on device` when it is full.
 - **Same tag, new image:** `talosctl upgrade --image <tag>` reuses an image the node already pulled under that
   tag. Use a new tag or `--image repo@sha256:<digest>`.
+- **Moving a node from r36 to r39: take the r36 CDI setup away first.** Before the node boots the r39 driver for the
+  first time, delete the r36 `nvidia-cdi-setup` DaemonSet and scale the GPU workloads to 0. Otherwise the r36
+  DaemonSet points `firmware_class.path` at the stale r36 GA10B firmware in `/var/fw-fresh`, which is the
+  hard-reset case described under "Userspace and firmware". After the upgrade apply
+  `manifests/gpu/cdi-setup-r39.yaml`: it replaces the firmware files in `/var/fw-fresh` and installs the r39
+  userspace libraries, then start the workloads again.
 
 ## CI
 
