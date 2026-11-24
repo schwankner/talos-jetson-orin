@@ -79,10 +79,9 @@ the Talos kernel (6.18) and provides one image per line:
 
 - **Same speed.** On the same board and clock, both lines give the same Ollama throughput, and CUDA 12 apps
   (for example Ollama's `cuda_jetpack6` backend) run on the r39 driver.
-- **Firmware does not have to match.** On the AGX Orin, the r36 image ran on r39.2.0 QSPI firmware and the r39
-  image ran on r36.5 QSPI firmware, both at full speed
-  ([table](docs/jetpack7.md#firmware-and-image-combinations)). On the Orin NX, the r39 image has only been
-  tested on r39.2.0 QSPI so far.
+- **Firmware does not have to match.** The r39 image ran on both r36.5 and r39.2.0 QSPI firmware on the Orin NX
+  and the AGX Orin, and the r36 image ran on r39.2.0 QSPI firmware, all at full speed
+  ([table](docs/jetpack7.md#firmware-and-image-combinations)).
 - **One line per node.** Both lines ship modules with the same names, so one image cannot contain both. To
   switch a node, change the module list in the machine config, upgrade to the other installer and apply the
   other CDI manifest ([steps](docs/jetpack7.md#firmware-and-image-combinations)).
@@ -355,7 +354,7 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 
 The r39 installer is published as `custom-installer-jp7`; r36 stays `custom-installer`. The r39 line builds the nvgpu extension and a firmware extension (`scripts/build-r39-firmware.sh`, from the `nvidia-l4t-firmware` deb), and uses `manifests/gpu/cdi-setup-r39.yaml` instead of `cdi-setup.yaml`. As on r36, the userspace libraries are downloaded on the node by the CDI setup's init container, from NVIDIA's apt repository: for r39 they are in the **`som`** component (`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`; there is no `t234` component), version and SHA-256 pinned in the manifest, about 26 MB. `scripts/check-r39-userspace.sh` (workflow "Check r39 userspace", also weekly) runs that very script and verifies the library closure.
 
-Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. On the AGX Orin the r39 image also ran on r36.5 firmware without that flash; on the Orin NX this is not tested yet, see [Two driver lines](#two-driver-lines-r36-jetpack-6-and-r39-jetpack-72). Tested on an Orin NX 16 GB (reComputer J401) and an AGX Orin 64 GB devkit: CUDA 13 driver (`cuInit` ok), llama.cpp, Ollama and vLLM on the GPU, load tests without errors; details and the pitfalls I hit in [docs/jetpack7.md](docs/jetpack7.md).
+Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. The flash is optional: on both the Orin NX and the AGX Orin the r39 image also ran on r36.5 firmware, see [Two driver lines](#two-driver-lines-r36-jetpack-6-and-r39-jetpack-72). Tested on an Orin NX 16 GB (reComputer J401) and an AGX Orin 64 GB devkit: CUDA 13 driver (`cuInit` ok), llama.cpp, Ollama and vLLM on the GPU, load tests without errors; details and the pitfalls I hit in [docs/jetpack7.md](docs/jetpack7.md).
 
 ---
 

@@ -18,7 +18,7 @@ kernel faults, and the node cold-booted cleanly after a power loss. CUDA 13 *con
 | Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-<kernel>-talos` |
 | Firmware extension | `nvidia-firmware-ext:v5` (r36 apt, component `t234`) | `nvidia-firmware-ext:r39-v1` (`scripts/build-r39-firmware.sh`) |
 | Userspace libraries | downloaded on the node (`t234` apt) | downloaded on the node (`som` apt, `manifests/gpu/cdi-setup-r39.yaml`) |
-| Board firmware (QSPI) | JetPack 6 (also ran on r39.2.0) | JetPack 7 (r39.2.0) on the Orin NX; on an AGX Orin it also ran on r36.5, see [Firmware and image combinations](#firmware-and-image-combinations) |
+| Board firmware (QSPI) | JetPack 6 (also ran on r39.2.0) | JetPack 7 (r39.2.0) or JetPack 6 (r36.5); both tested on Orin NX and AGX Orin, see [Firmware and image combinations](#firmware-and-image-combinations) |
 
 The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer are shared by both lines. With
 `JETPACK=r39` the build reuses them when they are already in the registry.
@@ -168,8 +168,29 @@ config>`; JSON 6902 patches are rejected for a multi-document config, and a stra
 the module list rather than replace it), run `talosctl upgrade --image <other installer>`, then apply the other
 line's CDI manifest. Flashing the QSPI does not touch the NVMe, so the installed image keeps booting after it.
 
-Not tested yet: the r39 image on r36.5 QSPI on an Orin NX. Earlier, on an Orin NX, the r36 stack (Talos
-v1.15.0-alpha.2, kernel 7.3) also ran on the r39.2.0 QSPI (qwen2.5:0.5b 66.2 tok/s, qwen3:4b 16.6 tok/s).
+**Orin NX 16 GB** (Seeed reComputer J401, P3767-0000), same Talos v1.14.7 release, GPU at 918 MHz from the
+`power-mode` DaemonSet, same Ollama settings:
+
+| QSPI firmware | Image | CUDA driver | qwen2.5:0.5b | qwen3:4b |
+|---|---|---|---|---|
+| r36.5 (UEFI 36.5.0) | r39 | 13.2 | 64.6–65.9 | 16.5–16.6 |
+| r39.2.0 | r39 | 13.2 | 65.7–65.8 | not measured |
+
+The r39 image on r36.5 QSPI loads all 11 modules, survives `talosctl reboot`, and shows no GPU faults in dmesg.
+The r36 image on r36 QSPI gives 64.6 and 16.4 tok/s on this board (README), so the speed is the same. Earlier, the
+r36 stack (Talos v1.15.0-alpha.2, kernel 7.3) also ran on the r39.2.0 QSPI (qwen2.5:0.5b 66.2 tok/s, qwen3:4b
+16.6 tok/s).
+
+Flashing the J401 back to r36.5 (Seeed `Linux_for_Tegra` branch `r36.5.0` on top of NVIDIA's r36.5 BSP, config
+`recomputer-orin-j401`, the same `--qspi-only` command as above):
+- The branch ships prebuilt DTBs, but `recomputer-orin-j401.conf` also lists the camera overlay
+  `tegra234-p3767-camera-p3768-imx219-dual-seeed.dtbo`, which is only in the branch as source. The flash fails
+  with `FileNotFoundError` before it writes anything. I removed that overlay from `OVERLAY_DTB_FILE`; it only adds
+  the IMX219 camera nodes.
+- A `--no-flash` dry run without a board fails with `No Board Spec. and no target connected`. With the board in
+  recovery mode, a normal run reads the board spec from it.
+- After the flash I did a cold boot (recovery jumper and USB cable removed, power off and on). The board booted
+  the NVMe directly.
 
 ## Upgrade pitfalls seen on a Jetson with these images
 
