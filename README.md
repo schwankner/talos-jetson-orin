@@ -389,6 +389,27 @@ talosctl get extensions --nodes <jetson-ip> | grep nvgpu
 # Expected: nvidia-tegra-nvgpu  5.13.0-drm-noshim-6.18.57-talos
 ```
 
+### Failed GPU pods after a reboot (`UnexpectedAdmissionError`, `NodeShutdown`)
+
+After `talosctl reboot` the GPU workload's namespace can hold a few failed pods. Two different things
+cause them:
+
+- `NodeShutdown`: while the node shuts down, the ReplicaSet keeps creating replacement pods and the
+  kubelet rejects each one. These pods never ran.
+- `UnexpectedAdmissionError` (`Allocate failed due to no healthy devices present`): the kubelet
+  admitted the GPU pod before the device plugin had registered `nvidia.com/gpu` again. The ReplicaSet
+  replaces it, and the next pod starts on the GPU.
+
+The GPU DaemonSets (`device-plugin`, `cdi-setup`, `power-mode`) use `hostNetwork` and no service
+account token, so they do not wait for the CNI or the API server after a boot. On an AGX Orin this cut
+the time between the first rejected GPU pod and the plugin registration from 36 s to 2 s, and the
+earlier storms of dozens of failed pods are gone. One rejected pod can still happen, because the kubelet
+admits the GPU pod in the same second as it starts the plugin. The failed pods are harmless; to remove
+them:
+```bash
+kubectl delete pods -n <namespace> --field-selector=status.phase=Failed
+```
+
 ---
 
 ## Related projects

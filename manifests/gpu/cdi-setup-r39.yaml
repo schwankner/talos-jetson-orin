@@ -270,6 +270,13 @@ spec:
       labels:
         app: nvidia-cdi-setup
     spec:
+      # Boot ordering: this pod needs neither the pod network nor the Kubernetes API. hostNetwork skips
+      # the CNI, which is not ready for the first minute after a reboot (sandbox creation fails with
+      # "network is not ready"), and without the service account token it does not wait for the API
+      # server either. So the GPU is registered and the CDI spec written before GPU workloads start;
+      # otherwise the first GPU pod after a reboot fails with UnexpectedAdmissionError.
+      hostNetwork: true
+      automountServiceAccountToken: false
       tolerations:
         - operator: Exists
       priorityClassName: system-node-critical
