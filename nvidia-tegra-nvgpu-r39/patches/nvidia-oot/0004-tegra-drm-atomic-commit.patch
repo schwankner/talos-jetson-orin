@@ -1,0 +1,19 @@
+tegra-drm: atomic check callback receives a drm_atomic_commit
+
+Linux 7.3 passes a struct drm_atomic_commit to the mode-config atomic
+check callback. r39 already includes drm_print.h, so only the signature
+of the headless build's tegra_atomic_check() changes.
+
+diff --git a/drivers/gpu/drm/tegra/drm.c b/drivers/gpu/drm/tegra/drm.c
+index a9ebf72..74527ef 100644
+--- a/drivers/gpu/drm/tegra/drm.c
++++ b/drivers/gpu/drm/tegra/drm.c
+@@ -58,7 +58,7 @@
+ #define CDMA_GATHER_FETCHES_MAX_NB 16383
+ 
+ static int tegra_atomic_check(struct drm_device *drm,
+-			      struct drm_atomic_state *state)
++			      struct drm_atomic_commit *state)
+ {
+ 	int err;
+ 
