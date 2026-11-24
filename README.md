@@ -249,6 +249,13 @@ The `jetson-power-mode` DaemonSet sets GPU and CPU clocks at boot:
 
 Without MAXN mode, GPU runs at ~400-600 MHz and throughput is roughly halved.
 
+The table is the Orin NX / Orin Nano profile (`p3767` in the device tree). On other Orin modules, such
+as the AGX Orin (`p3701`), the DaemonSet only runs MAXN, at the limits the board reports: the highest
+GPU devfreq frequency, `cpuinfo_max_freq` and all cores online. On an AGX Orin 64 GB that is GPU
+1300.5 MHz, 12 cores at 2201.6 MHz and EMC 3199 MHz. Other `POWER_MODE` values fall back to MAXN with a
+warning there, because their numbers are the Orin NX ones. The log line `Board: ...` shows which
+profile was picked.
+
 ---
 
 ## Build from source
