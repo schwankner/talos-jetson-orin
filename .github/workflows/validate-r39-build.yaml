@@ -66,7 +66,7 @@ jobs:
 
       - name: Restore the Talos kernel's Module.symvers
         id: symvers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: /tmp/r39-symvers/Module.symvers
           key: ${{ steps.ver.outputs.key }}
@@ -236,7 +236,7 @@ jobs:
       - name: Save Module.symvers to the Actions cache
         if: always() && steps.export.outputs.ok == 'true'
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: /tmp/r39-symvers/Module.symvers
           key: ${{ needs.fast-compile.outputs.symvers_key }}
