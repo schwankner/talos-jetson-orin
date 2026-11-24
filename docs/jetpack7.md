@@ -105,6 +105,11 @@ download, 32 MB kept). Three things that are easy to miss:
   of the new one. With the r36 PMU firmware the r39 `nvgpu` does not boot the PMU (`pwr_falcon_exterrstat
   0xbadf....`) and then dereferences NULL in its stall interrupt thread, which hard-resets the node on GPU
   power-on, with no panic record. The r39 manifest syncs the files on every start.
+- **GPU clock after boot.** The r39 `nvgpu` creates its devfreq node only at the first GPU use, and its default
+  maximum is 1173 MHz (the Super clock). `manifests/gpu/power-mode.yaml` looks for the node every second and applies
+  the power-mode cap (918 MHz in MAXN) as soon as it appears, so the GPU does not run above it. The cap used to come
+  from the 60-second re-assert loop, which left up to a minute without it after the first GPU use. The log line is
+  `GPU devfreq appeared, capped at ... Hz`.
 
 `scripts/check-r39-userspace.sh` (workflow "Check r39 userspace", weekly and on changes) runs the manifest's own
 download script and verifies the checksums and the library closure; `scripts/build-r39-firmware.sh` builds the
