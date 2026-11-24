@@ -1253,3 +1253,26 @@ the next DaemonSet restart; before, the init container skipped whenever `libcuda
 4M-element write kernel, results checked, 500 launches) failed with 221 before and passes after the
 fix with driver 12060. Found while testing the optional CUDA 13.2 compat driver (README, "CUDA 13").
 
+
+---
+
+## Bug 27 — Stale GPU Firmware in `/var/fw-fresh` After a Firmware Extension Update
+
+**Symptom**: after a node upgrade with a newer `nvidia-firmware-ext` (e.g. tag `v4` → `v5`, which
+added `pmu_pkc_prod_sig.bin`), nvgpu still loads the old GA10B firmware. Files that changed between
+the two extension versions are never picked up. On the r39 line this was observed by mmalyska in
+PR #65: with stale firmware nvgpu fails to boot the PMU and the node resets on GPU power-on. The r36
+manifest (`manifests/gpu/cdi-setup.yaml`) has the same logic.
+
+**Root cause**: `cdi-writer.sh` in `nvidia-cdi-setup` copied `/usr/lib/firmware/ga10b` (read-only
+rootfs, see Bug 1) to NVMe `/var/fw-fresh/ga10b` only if `gpmu_ucode_next_prod_image.bin` was
+missing, then pointed `firmware_class.path` at `/var/fw-fresh`. The kernel searches that path
+first, and `/var` survives Talos upgrades, so the first copy stayed in front of every later
+firmware version.
+
+**Fix**: sync on every start instead of copying once. Every source file that is missing or differs
+(`cmp -s`) is copied with `cp -f`, files that no longer exist in the source are removed. Ported from
+the r39 manifest in PR #65 (`manifests/gpu/cdi-setup-r39.yaml`).
+
+**Validation (2026-11-04)**: script logic tested locally (fresh copy, unchanged rerun, changed
+file, added file, removed file). Not yet tested on the Orin NX.
