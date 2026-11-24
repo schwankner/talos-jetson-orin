@@ -1,8 +1,8 @@
 # Talos Linux on NVIDIA Jetson Orin — GPU Compute / CUDA
 
-[![Talos](https://img.shields.io/badge/Talos-v1.14.4-blue)](https://github.com/siderolabs/talos/releases/tag/v1.14.4)
+[![Talos](https://img.shields.io/badge/Talos-v1.14.7-blue)](https://github.com/siderolabs/talos/releases/tag/v1.14.7)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.37.1-blue)](https://kubernetes.io/)
-[![Kernel](https://img.shields.io/badge/kernel-6.18.57--talos-orange)](https://github.com/siderolabs/pkgs)
+[![Kernel](https://img.shields.io/badge/kernel-6.18.65--talos-orange)](https://github.com/siderolabs/pkgs)
 [![nvgpu](https://img.shields.io/badge/nvgpu-5.13.0--drm-green)](https://github.com/OE4T/linux-nvgpu)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
 [![Build](https://github.com/schwankner/talos-jetson-orin/actions/workflows/release.yaml/badge.svg)](https://github.com/schwankner/talos-jetson-orin/actions/workflows/release.yaml)
@@ -11,7 +11,8 @@ Run [Talos Linux](https://www.talos.dev/) on any **NVIDIA Jetson Orin** module w
 compute in Kubernetes pods. One USB image boots the entire Orin family (AGX Orin, Orin NX, Orin Nano)
 — all share the T234 SoC, GA10B GPU (SM 8.7), and UEFI boot path.
 
-Tested on **Jetson Orin NX 16 GB** (reComputer J4012). GPU inference performance vs. native JetPack 6.2:
+Tested on **Jetson Orin NX 16 GB** (reComputer J4012) and **Jetson AGX Orin 64 GB** (devkit, P3701-0005).
+GPU inference performance on the Orin NX vs. native JetPack 6.2:
 
 | Model | Talos (this image) | JetPack 6.2 native | Parity |
 |---|---|---|---|
@@ -55,12 +56,48 @@ No `privileged: true`, no manual `/dev` bind-mounts in pod specs.
 
 ---
 
+## Two driver lines: r36 (JetPack 6) and r39 (JetPack 7.2)
+
+NVIDIA currently ships two Jetson Linux lines for Orin:
+
+- **r36 / JetPack 6.x** (latest r36.5): CUDA 12.6, Ubuntu 22.04, kernel 5.15 in NVIDIA's BSP.
+- **r39 / JetPack 7.2** (r39.2.x, mid-2026): CUDA 13.2, Ubuntu 24.04, kernel 6.8 in NVIDIA's BSP. JetPack 7.0
+  (r38) and 7.1 supported only Jetson Thor. 7.2 is the first JetPack 7 release that officially supports Orin:
+  the [r39.2.1 Developer Guide](https://docs.nvidia.com/jetson/archives/r39.2.1/DeveloperGuide/) lists AGX Orin,
+  Orin NX and Orin Nano next to Thor.
+
+NVIDIA's support covers its own BSP kernel, not Talos, for both lines. This project builds the GPU modules for
+the Talos kernel (6.18) and provides one image per line:
+
+| | r36 (default) | r39 (opt-in) |
+|---|---|---|
+| GPU module sources | [OE4T](https://github.com/OE4T) `patches-r36.5` (NVIDIA's r36 sources, ported to newer kernels) | NVIDIA's own `jetson_39.2.1` sources, patched here (OE4T has no r39 branch for Orin) |
+| CUDA driver | 12.6; 13.2 opt-in through [`CUDA_COMPAT`](#cuda-13-optional) | 13.2 |
+| Installer | `custom-installer` | `custom-installer-jp7` |
+| CDI manifest | `manifests/gpu/cdi-setup.yaml` | `manifests/gpu/cdi-setup-r39.yaml` |
+| Tested on | Orin NX 16 GB, AGX Orin 64 GB | Orin NX 16 GB, AGX Orin 64 GB |
+
+- **Same speed.** On the same board and clock, both lines give the same Ollama throughput, and CUDA 12 apps
+  (for example Ollama's `cuda_jetpack6` backend) run on the r39 driver.
+- **Firmware does not have to match.** On the AGX Orin, the r36 image ran on r39.2.0 QSPI firmware and the r39
+  image ran on r36.5 QSPI firmware, both at full speed
+  ([table](docs/jetpack7.md#firmware-and-image-combinations)). On the Orin NX, the r39 image has only been
+  tested on r39.2.0 QSPI so far.
+- **One line per node.** Both lines ship modules with the same names, so one image cannot contain both. To
+  switch a node, change the module list in the machine config, upgrade to the other installer and apply the
+  other CDI manifest ([steps](docs/jetpack7.md#firmware-and-image-combinations)).
+- **Which to use.** r36 is the default and has the longest test history. Use r39 if you want CUDA 13 natively
+  or plan to flash JetPack 7 firmware anyway. Because it runs on both firmware lines, r39 is the candidate for a
+  single image for all Orin boards.
+
+---
+
 ## Requirements
 
 - Jetson Orin module (AGX Orin, Orin NX 16/8 GB, Orin Nano 8/4 GB)
 - EDK2 UEFI in SPI flash (factory default on all Orin modules)
 - USB stick (16 GB+) for flashing
-- `talosctl` v1.14.4: https://github.com/siderolabs/talos/releases/tag/v1.14.4
+- `talosctl` v1.14.7: https://github.com/siderolabs/talos/releases/tag/v1.14.7
 
 > **Xavier, TX2, classic Nano**: different GPU architecture — not supported.
 
@@ -278,11 +315,11 @@ source scripts/common.sh
 
 **Custom installer image** (for `talosctl upgrade`):
 ```
-ghcr.io/schwankner/custom-installer:v1.14.4-6.18.57-nvgpu5.13.0-drm-noshim
+ghcr.io/schwankner/custom-installer:v1.14.7-6.18.65-nvgpu5.13.0-drm-noshim
 ```
 
 JetPack 7.2 (r39) nodes use the separate repository `custom-installer-jp7`
-(`ghcr.io/schwankner/custom-installer-jp7:v1.14.2-6.18.54-nvgpu39.2.1-jp7`). Both lines are built from the
+(`ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7`). Both lines are built from the
 same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 
 > **Talos ≥ 1.14:** `ghcr.io/siderolabs/installer` is no longer published — released installers
@@ -305,7 +342,7 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 
 ---
 
-## JetPack 7.2 (r39) line — experimental
+## Building and running the r39 line
 
 `JETPACK=r39` selects a second build line: the nvgpu driver from NVIDIA's own r39.2.1 sources (package `nvidia-tegra-nvgpu-r39/`, CUDA 13) instead of the OE4T r36.5 one. The default stays `r36`. Status, differences and run history: [docs/jetpack7.md](docs/jetpack7.md).
 
@@ -316,7 +353,7 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 
 The r39 installer is published as `custom-installer-jp7`; r36 stays `custom-installer`. The r39 line builds the nvgpu extension and a firmware extension (`scripts/build-r39-firmware.sh`, from the `nvidia-l4t-firmware` deb), and uses `manifests/gpu/cdi-setup-r39.yaml` instead of `cdi-setup.yaml`. As on r36, the userspace libraries are downloaded on the node by the CDI setup's init container, from NVIDIA's apt repository: for r39 they are in the **`som`** component (`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`; there is no `t234` component), version and SHA-256 pinned in the manifest, about 26 MB. `scripts/check-r39-userspace.sh` (workflow "Check r39 userspace", also weekly) runs that very script and verifies the library closure.
 
-Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. The firmware line and the image line do not have to match: on an AGX Orin 64 GB with Talos v1.14.7, the r36 image ran on r39.2.0 QSPI and the r39 image ran on r36.5 QSPI, at the same speed as on matching firmware (table in [docs/jetpack7.md](docs/jetpack7.md#firmware-and-image-combinations)). The r39 image on r36.5 QSPI is not tested on an Orin NX yet. Tested on an Orin NX 16 GB (reComputer J401) with Talos v1.14.2 / kernel 6.18.54: CUDA 13 driver (`cuInit` ok), llama.cpp on the GPU, a 2-hour soak without errors; details and the pitfalls we hit in [docs/jetpack7.md](docs/jetpack7.md).
+Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. On the AGX Orin the r39 image also ran on r36.5 firmware without that flash; on the Orin NX this is not tested yet, see [Two driver lines](#two-driver-lines-r36-jetpack-6-and-r39-jetpack-72). Tested on an Orin NX 16 GB (reComputer J401) and an AGX Orin 64 GB devkit: CUDA 13 driver (`cuInit` ok), llama.cpp, Ollama and vLLM on the GPU, load tests without errors; details and the pitfalls I hit in [docs/jetpack7.md](docs/jetpack7.md).
 
 ---
 
@@ -324,11 +361,11 @@ Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed
 
 | Component | Version |
 |---|---|
-| Talos Linux | v1.14.4 |
+| Talos Linux | v1.14.7 |
 | Kubernetes | v1.37.1 |
-| Linux kernel | 6.18.57-talos |
-| nvidia-tegra-nvgpu extension | 5.13.0-drm-noshim |
-| JetPack libs (userspace) | r36.5.0 |
+| Linux kernel | 6.18.65-talos |
+| nvidia-tegra-nvgpu extension | 5.13.0-drm-noshim (r36), 39.2.1-jp7 (r39) |
+| JetPack libs (userspace) | r36.5.0 (r36), r39.2.1 (r39) |
 | Ollama | 0.20.5 |
 
 ---
@@ -337,8 +374,9 @@ Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed
 
 | Module | Status |
 |---|---|
-| Jetson AGX Orin (all SKUs) | Supported (same T234 SoC / GA10B GPU) |
-| Jetson Orin NX 16 GB | Tested |
+| Jetson AGX Orin 64 GB | Tested (r36 and r39) |
+| Jetson AGX Orin 32 GB / Industrial | Supported (same T234 SoC / GA10B GPU) |
+| Jetson Orin NX 16 GB | Tested (r36 and r39) |
 | Jetson Orin NX 8 GB | Supported |
 | Jetson Orin Nano 8 GB | Supported |
 | Jetson Orin Nano 4 GB | Supported |
@@ -387,7 +425,7 @@ This was the root cause before the DRM fix was applied. With the current extensi
 (`nvgpu5.13.0-drm-noshim`), this should not occur. Verify the correct extension is loaded:
 ```bash
 talosctl get extensions --nodes <jetson-ip> | grep nvgpu
-# Expected: nvidia-tegra-nvgpu  5.13.0-drm-noshim-6.18.57-talos
+# Expected: nvidia-tegra-nvgpu  5.13.0-drm-noshim-6.18.65-talos
 ```
 
 ### Failed GPU pods after a reboot (`UnexpectedAdmissionError`, `NodeShutdown`)
