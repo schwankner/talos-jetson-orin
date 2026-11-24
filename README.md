@@ -187,10 +187,21 @@ When a pod requests it, containerd reads the CDI spec and injects devices + libs
 - `/dev/nvmap` — GPU memory allocator
 - `/dev/host1x-fence` — host1x sync fences (needed by the CUDA 13 compat driver)
 - `/var/lib/nvidia-tegra-libs/tegra` → `/usr/lib/aarch64-linux-gnu/nvidia` (JetPack r36.5 libs)
+- `/var/lib/nvidia-tegra-libs/nv_tegra_release` → `/etc/nv_tegra_release` (Jetson marker file, see below)
 - `LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:...`
 
 The CDI `LD_LIBRARY_PATH` overrides one set in the pod spec, so library selection is a node-level
 setting in the DaemonSet, not a per-pod one.
+
+`/etc/nv_tegra_release` lets generic images run on the GPU. vLLM detects the CUDA platform through
+NVML, which Tegra does not have, and then falls back to looking for this file. Without it, vLLM from
+PyPI fails at startup with `RuntimeError: Device string must not be empty`. The `cdi-writer` writes the
+file before the spec (`# R36 (release), REVISION: 5.0, ...`, or `R39 ... 2.1` on the r39 line).
+
+After changing `cdi-setup.yaml` or `cdi-setup-r39.yaml`, restart the DaemonSet with
+`kubectl -n nvidia-system rollout restart ds/nvidia-cdi-setup`. `kubectl apply` alone only updates the
+ConfigMap, and the running pod keeps its old scripts. GPU pods that started before the new spec was
+written keep the old injection until they are recreated.
 
 ### CUDA 13 (optional)
 
