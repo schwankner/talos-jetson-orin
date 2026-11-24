@@ -15,7 +15,7 @@ CACHE_REGISTRY="${CACHE_REGISTRY:-}"  # set to ghcr.io/<owner>/build-cache in CI
 
 # ── Talos version ────────────────────────────────────────────────────────────
 # Tracked by Renovate — update-talos.yaml is no longer used (removed).
-TALOS_VERSION="${TALOS_VERSION:-v1.14.7}"
+TALOS_VERSION="${TALOS_VERSION:-v1.15.0-beta.0}"  # TEST: r39 on Linux 7.3, do not merge
 
 # ── siderolabs/pkgs pin — derived from TALOS_VERSION ─────────────────────────
 # Talos records the exact pkgs commit it was built against in its own
@@ -29,7 +29,7 @@ if [ -z "${PKGS_COMMIT:-}" ]; then
     | grep '^PKGS ?=' | sed -E 's/^PKGS \?= .*-g([0-9a-f]+)$/\1/')"
   [ -z "${PKGS_COMMIT}" ] && { echo "[ERROR] Could not derive PKGS_COMMIT from Talos ${TALOS_VERSION} Makefile" >&2; exit 1; }
 fi
-PKGS_BRANCH="${PKGS_BRANCH:-release-$(echo "${TALOS_VERSION}" | sed 's/^v//' | cut -d. -f1,2)}"
+PKGS_BRANCH="${PKGS_BRANCH:-main}"  # TEST: v1.15 has no release branch yet
 
 # ── Kernel version — derived automatically from siderolabs/pkgs ──────────────
 # Reads linux_version from the PINNED PKGS_COMMIT (not the branch HEAD!) so
@@ -68,7 +68,7 @@ case "${JETPACK}" in
   r39)
     NVGPU_PKG="nvidia-tegra-nvgpu-r39"
     INSTALLER_REPO="custom-installer-jp7"
-    : "${NVGPU_VERSION:=39.2.1-jp7}"
+    : "${NVGPU_VERSION:=39.2.1-jp7-linux73test}"  # TEST
     : "${FIRMWARE_EXT_TAG:=r39-v1}"   # scripts/build-r39-firmware.sh; the userspace libraries are
                                       # downloaded on the node by manifests/gpu/cdi-setup-r39.yaml
     ;;
