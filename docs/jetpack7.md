@@ -18,7 +18,7 @@ kernel faults, and the node cold-booted cleanly after a power loss. CUDA 13 *con
 | Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-<kernel>-talos` |
 | Firmware extension | `nvidia-firmware-ext:v5` (r36 apt, component `t234`) | `nvidia-firmware-ext:r39-v1` (`scripts/build-r39-firmware.sh`) |
 | Userspace libraries | downloaded on the node (`t234` apt) | downloaded on the node (`som` apt, `manifests/gpu/cdi-setup-r39.yaml`) |
-| Board firmware (QSPI) | JetPack 6 | **JetPack 7 (r39.2.0) must be flashed**, see below |
+| Board firmware (QSPI) | JetPack 6 (also ran on r39.2.0) | JetPack 7 (r39.2.0) on the Orin NX; on an AGX Orin it also ran on r36.5, see [Firmware and image combinations](#firmware-and-image-combinations) |
 
 The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer are shared by both lines. With
 `JETPACK=r39` the build reuses them when they are already in the registry.
@@ -137,11 +137,39 @@ power cycle (recovery jumper and USB cable removed, then power off and on) the N
 entry set by hand. If the board lands in the UEFI shell after the flash, power-cycle it before looking at the boot
 entries.
 
-r36 modules also loaded on the r39 firmware and device tree in a test (the media engines log `failed to
-register host1x actmon`), so flashing does not immediately break an r36 image, but do not rely on it. In one
-further test on an Orin NX the full r36 stack (Talos v1.15.0-alpha.2, kernel 7.3, OE4T nvgpu 5.13) also ran Ollama
-on the GPU at normal speed on the r39.2.0 QSPI firmware (qwen2.5:0.5b 66.2 tok/s, qwen3:4b 16.6 tok/s). That is a
-single data point, but it means flashing the QSPI first and upgrading Talos afterwards worked as a two-step move.
+## Firmware and image combinations
+
+The QSPI firmware line and the image line do not have to match. On the AGX Orin 64 GB devkit (P3701-0005) all four
+combinations below ran on Talos v1.14.7 / kernel 6.18.65 (release `v1.14.7-nvgpu5.13.0-drm-noshim`), with the
+`power-mode` DaemonSet active (MAXN, GPU 1300.5 MHz, EMC 3199 MHz). Ollama 0.20.5, 200 tokens, `temperature` 0,
+two runs each:
+
+| QSPI firmware | Image | CUDA driver | qwen2.5:0.5b | qwen3:4b | qwen3.6:35b | gemma4:31b |
+|---|---|---|---|---|---|---|
+| r36.5 (UEFI 36.5.0) | r36 | 12.6 | 145.0–145.2 | 37.6–37.8 | 25.3 | 7.2 |
+| r39.2.0 | r36 | 12.6 | 145.2–145.5 | 37.7 | 25.3–25.4 | 7.1–7.2 |
+| r36.5 (UEFI 36.5.0) | r39 | 13.2 | 143.8–144.5 | 37.5–37.7 | 25.1–25.2 | 7.1–7.2 |
+| r39.2.0 | r39 | 13.2 | see note | | | |
+
+- In every combination, all modules load, `/dev/dri/renderD128`, `/dev/host1x-fence` and `/dev/nvmap` are
+  present, and the node comes back on the GPU after `talosctl reboot`. There were no GPU faults in dmesg.
+- The QSPI line makes no measurable difference. The r39 image is within 1 % of the r36 image.
+- Note on the last row: r39 on r39 QSPI was measured earlier on v1.14.4 without the `power-mode` DaemonSet
+  (qwen2.5:0.5b 108–116, qwen3:4b 27.5, qwen3.6:35b 18, gemma4:31b 6.5 tok/s at 1300.5 MHz). Those numbers are
+  lower because EMC and the CPU governor were not set, not because of the firmware.
+- `tegra_se` fails to load with `Unknown symbol host1x_*` on both image lines, because the out-of-tree `host1x`
+  replaces the in-tree one. It is not needed for the GPU.
+- The CDI setup DaemonSet syncs the GPU firmware into `/var/fw-fresh` on every start. When a node changes image
+  lines, it replaces the other line's files there (`firmware: updating fecs_encrypt_prod.bin` and so on).
+
+Switching lines on a running node: scale GPU workloads to 0, delete the `nvidia-cdi-setup` DaemonSet, stage the
+machine config with the other line's module list and installer (`talosctl apply-config --mode=staged -f <full
+config>`; JSON 6902 patches are rejected for a multi-document config, and a strategic merge patch would append to
+the module list rather than replace it), run `talosctl upgrade --image <other installer>`, then apply the other
+line's CDI manifest. Flashing the QSPI does not touch the NVMe, so the installed image keeps booting after it.
+
+Not tested yet: the r39 image on r36.5 QSPI on an Orin NX. Earlier, on an Orin NX, the r36 stack (Talos
+v1.15.0-alpha.2, kernel 7.3) also ran on the r39.2.0 QSPI (qwen2.5:0.5b 66.2 tok/s, qwen3:4b 16.6 tok/s).
 
 ## Upgrade pitfalls seen on a Jetson with these images
 
