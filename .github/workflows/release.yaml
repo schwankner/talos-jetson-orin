@@ -281,6 +281,15 @@ jobs:
             source scripts/common.sh
             echo "Talos Linux \`${TALOS_VERSION}\`, Linux kernel \`${KERNEL_VERSION}\`."
             echo
+            echo "| Module | Status |"
+            echo "|--------|--------|"
+            echo "| Jetson Orin NX 16 GB (reComputer J4012) | ✅ Tested |"
+            echo "| Jetson Orin NX 8 GB | ✅ Compatible (same SoC/GPU) |"
+            echo "| Jetson Orin Nano 8 GB | ✅ Compatible (same SoC/GPU) |"
+            echo "| Jetson Orin Nano 4 GB | ✅ Compatible (same SoC/GPU) |"
+            echo "| Jetson AGX Orin (all SKUs) | ✅ Compatible (same SoC/GPU) |"
+            echo "| Xavier / TX2 / Nano (classic) | ❌ Different GPU architecture |"
+            echo
             echo "The r39 line needs JetPack 7 firmware in the board's QSPI — see docs/jetpack7.md before flashing."
             echo
             echo "### Flash"

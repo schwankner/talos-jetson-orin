@@ -138,7 +138,10 @@ entry set by hand. If the board lands in the UEFI shell after the flash, power-c
 entries.
 
 r36 modules also loaded on the r39 firmware and device tree in a test (the media engines log `failed to
-register host1x actmon`), so flashing does not immediately break an r36 image, but do not rely on it.
+register host1x actmon`), so flashing does not immediately break an r36 image, but do not rely on it. In one
+further test on an Orin NX the full r36 stack (Talos v1.15.0-alpha.2, kernel 7.3, OE4T nvgpu 5.13) also ran Ollama
+on the GPU at normal speed on the r39.2.0 QSPI firmware (qwen2.5:0.5b 66.2 tok/s, qwen3:4b 16.6 tok/s). That is a
+single data point, but it means flashing the QSPI first and upgrading Talos afterwards worked as a two-step move.
 
 ## Upgrade pitfalls seen on a Jetson with these images
 
@@ -154,6 +157,10 @@ register host1x actmon`), so flashing does not immediately break an r36 image, b
   hard-reset case described under "Userspace and firmware". After the upgrade apply
   `manifests/gpu/cdi-setup-r39.yaml`: it replaces the firmware files in `/var/fw-fresh` and installs the r39
   userspace libraries, then start the workloads again.
+- **One JetPack line per cluster.** `cdi-setup-r39.yaml` uses the same names as `cdi-setup.yaml` (namespace
+  `nvidia-system`, ConfigMap `nvidia-cdi-setup-scripts`, DaemonSet `nvidia-cdi-setup`, host directory
+  `/var/lib/nvidia-tegra-libs`), so applying one replaces the other. A cluster runs one line at a time, and the CDI
+  manifest must match it: nothing stops the r39 DaemonSet from landing on an r36 node.
 
 ## CI
 
