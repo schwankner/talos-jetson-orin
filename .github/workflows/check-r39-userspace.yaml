@@ -1,0 +1,60 @@
+name: Check r39 userspace
+
+# Verifies the pieces of the JetPack r39 GPU userspace that come from NVIDIA's apt repository
+# (component "som" of r39.2), without a kernel build and without pushing anything:
+#   - scripts/check-r39-userspace.sh runs the restore-libs.sh of manifests/gpu/cdi-setup-r39.yaml
+#     (the script the node's init container runs): pinned package SHA-256, the libcuda closure,
+#     the libraries libcuda dlopen()s at cuInit;
+#   - scripts/build-r39-firmware.sh assembles the nvidia-firmware-ext extension (no push).
+# About 2 minutes. Also runs weekly, to notice early when NVIDIA changes the repository.
+
+on:
+  pull_request:
+    paths:
+      - manifests/gpu/cdi-setup-r39.yaml
+      - scripts/check-r39-userspace.sh
+      - scripts/build-r39-firmware.sh
+      - scripts/common.sh
+      - .github/workflows/check-r39-userspace.yaml
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  JETPACK: r39
+
+concurrency:
+  group: check-r39-userspace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Userspace libraries and firmware
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Make sure mikefarah yq is available
+        run: |
+          if ! yq --version 2>/dev/null | grep -q mikefarah; then
+            sudo curl -fsSL -o /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_arm64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          yq --version
+
+      - name: Fetch the libraries and verify the closure
+        run: scripts/check-r39-userspace.sh "${RUNNER_TEMP}/userspace"
+
+      - name: Assemble the firmware extension
+        run: scripts/build-r39-firmware.sh
+
+      - name: Show the packaged files
+        run: |
+          find /tmp/r39-firmware/out/firmware/rootfs \( -type f -o -type l \) | sort
+          cat /tmp/r39-firmware/out/firmware/manifest.yaml
