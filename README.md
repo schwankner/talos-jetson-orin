@@ -331,10 +331,12 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 > `UnattendedInstallConfig` and `EtcFileConfig` documents, but still work unchanged; migrating them
 > is tracked separately.
 
-> **Upgrades on Jetson Orin need kexec disabled (Bug 25):** `kexec_file_load` fails on this
-> hardware, and Talos then reverts the upgrade to the previous image while `talosctl upgrade` still
-> reports success. `manifests/talos/machine-patch.yaml` sets `kernel.kexec_load_disabled: "1"` to
-> avoid this. On a node installed before that change, apply it once (no reboot needed):
+> **Upgrading from Talos v1.14.4 or older (Bug 25):** `kexec_file_load` fails on Jetson Orin, and
+> Talos up to v1.14.4 then reverts the upgrade to the previous image while `talosctl upgrade` still
+> reports success. Talos v1.14.5 and newer skip kexec in that case, but the reboot is run by the
+> version that is installed, so an upgrade *from* an older version still needs kexec disabled.
+> `manifests/talos/machine-patch.yaml` sets `kernel.kexec_load_disabled: "1"`. On a node installed
+> before that change, apply it once (no reboot needed):
 > `talosctl patch machineconfig -n <jetson-ip> --patch '{"machine":{"sysctls":{"kernel.kexec_load_disabled":"1"}}}'`,
 > or pass `--reboot-mode powercycle` to `talosctl upgrade`. Verify every upgrade with
 > `talosctl get extensions`. Details in

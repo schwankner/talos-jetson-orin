@@ -173,8 +173,9 @@ v1.15.0-alpha.2, kernel 7.3) also ran on the r39.2.0 QSPI (qwen2.5:0.5b 66.2 tok
 
 ## Upgrade pitfalls seen on a Jetson with these images
 
-- **Stale boot entry** (see `BUGS.md`, Bug 25): the Jetson UEFI keeps the old UKI as default. After an install,
-  check what runs (`talosctl get extensions`); the version tag alone can be identical.
+- **Stale boot entry** (see `BUGS.md`, Bug 25): on an upgrade from Talos v1.14.4 or older, a failed kexec makes
+  Talos revert to the old UKI; disable kexec first (`kernel.kexec_load_disabled: "1"`). Fixed from v1.14.5 on.
+  After an install, check what runs (`talosctl get extensions`); the version tag alone can be identical.
 - **ESP space:** each UKI is about 575 MB (the initramfs carries the kernel modules). A 2 GB ESP holds three at
   most; the installer fails with `no space left on device` when it is full.
 - **Same tag, new image:** `talosctl upgrade --image <tag>` reuses an image the node already pulled under that
