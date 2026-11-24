@@ -1,7 +1,14 @@
-# power-mode.yaml — Jetson Orin NX Power Mode DaemonSet
+# power-mode.yaml — Jetson Orin Power Mode DaemonSet
 #
 # Sets GPU and CPU clock limits at node startup via sysfs.
-# Defaults to MAXN mode (GPU 918 MHz, performance governor).
+# Defaults to MAXN mode (performance governor).
+#
+# Board profiles (detected from the device tree):
+#   Orin NX / Orin Nano (p3767)  the mode table below, MAXN = GPU 918 MHz
+#   other Orin modules (AGX Orin p3701, ...)  MAXN only, at the limits the board reports:
+#     GPU = highest devfreq available_frequencies entry (1300.5 MHz on AGX Orin 64 GB),
+#     CPU = cpuinfo_max_freq, all cores online. Other modes fall back to MAXN with a warning,
+#     because their numbers are the Orin NX ones.
 #
 # ┌──────────────────────────────────────────────────────────────────────────┐
 # │  ⚠  MAXN SUPER is PERMANENTLY BLOCKED for Orin NX 16/8GB                │
@@ -46,6 +53,13 @@ spec:
       labels:
         app: jetson-power-mode
     spec:
+      # Boot ordering: this pod needs neither the pod network nor the Kubernetes API. hostNetwork skips
+      # the CNI, which is not ready for the first minute after a reboot (sandbox creation fails with
+      # "network is not ready"), and without the service account token it does not wait for the API
+      # server either. So the GPU is registered and the CDI spec written before GPU workloads start;
+      # otherwise the first GPU pod after a reboot fails with UnexpectedAdmissionError.
+      hostNetwork: true
+      automountServiceAccountToken: false
       tolerations:
         - operator: Exists
       priorityClassName: system-node-critical
@@ -102,6 +116,37 @@ spec:
                   CPU_MAX=1984000;     CORES=8;  EMC_LOCK=true  ;;
               esac
 
+              # ── Board profile ─────────────────────────────────────────────
+              # The table above is for Orin NX / Orin Nano (p3767). Other modules get MAXN at the limits the
+              # board itself reports: GPU_FREQ=auto (highest devfreq frequency), CPU_MAX=auto
+              # (cpuinfo_max_freq), all cores online. With fixed NX numbers an AGX Orin would be capped at
+              # 918 MHz and lose 4 of its 12 cores.
+              BOARD_COMPAT=$(tr '\0' ' ' < /sys/firmware/devicetree/base/compatible 2>/dev/null || echo "")
+              case "${BOARD_COMPAT}" in
+                *nvidia,p3767*) BOARD=orin-nx-nano ;;
+                *nvidia,p3701*) BOARD=agx-orin ;;
+                *)              BOARD=unknown ;;
+              esac
+              echo "[power-mode] Board: ${BOARD} (${BOARD_COMPAT})"
+              if [ "${BOARD}" != "orin-nx-nano" ]; then
+                if [ "${POWER_MODE}" != "MAXN" ]; then
+                  echo "[power-mode] ⚠ POWER_MODE=${POWER_MODE} is only profiled for Orin NX / Nano, using MAXN"
+                  POWER_MODE=MAXN
+                fi
+                GPU_FREQ=auto; GPU_GOV=performance
+                CPU_MAX=auto;  CORES=all;  EMC_LOCK=true
+              fi
+
+              # GPU target in Hz. auto = highest available devfreq frequency (read when the node exists:
+              # on r39 it appears only at the first GPU use).
+              gpu_target() {
+                if [ "${GPU_FREQ}" = "auto" ]; then
+                  tr ' ' '\n' < "${GPU_DEVFREQ}/available_frequencies" | grep -v '^$' | sort -n | tail -1
+                else
+                  echo "${GPU_FREQ}"
+                fi
+              }
+
               echo "[power-mode] GPU freq=${GPU_FREQ} Hz, governor=${GPU_GOV}, EMC lock=${EMC_LOCK}"
               echo "[power-mode] CPU max=${CPU_MAX} kHz, cores=${CORES}"
 
@@ -110,13 +155,14 @@ spec:
               apply_settings() {
                 # ── GPU: set freq cap BEFORE switching governor ─────────────
                 if [ -d "${GPU_DEVFREQ}" ]; then
+                  GF=$(gpu_target)
                   # Write max_freq first (avoid min > max), then min
-                  echo "${GPU_FREQ}"  > "${GPU_DEVFREQ}/max_freq"
-                  echo "${GPU_FREQ}"  > "${GPU_DEVFREQ}/min_freq"
+                  echo "${GF}"  > "${GPU_DEVFREQ}/max_freq"
+                  echo "${GF}"  > "${GPU_DEVFREQ}/min_freq"
                   echo "${GPU_GOV}"   > "${GPU_DEVFREQ}/governor"
                   # With 'performance' governor, also set userspace target freq
                   if [ "${GPU_GOV}" = "userspace" ]; then
-                    echo "${GPU_FREQ}" > "${GPU_DEVFREQ}/userspace/set_freq" 2>/dev/null || true
+                    echo "${GF}" > "${GPU_DEVFREQ}/userspace/set_freq" 2>/dev/null || true
                   fi
                   CUR=$(cat "${GPU_DEVFREQ}/cur_freq" 2>/dev/null || echo "?")
                   echo "[power-mode] GPU cur_freq=${CUR} Hz ✓"
@@ -149,6 +195,7 @@ spec:
 
                 # ── CPU cores: hotplug ──────────────────────────────────────
                 TOTAL=$(ls -d ${CPU_BASE}/cpu[0-9]* 2>/dev/null | wc -l)
+                [ "${CORES}" = "all" ] && CORES="${TOTAL}"
                 i=0
                 while [ $i -lt "${TOTAL}" ]; do
                   HP="${CPU_BASE}/cpu${i}/online"
@@ -170,7 +217,9 @@ spec:
                 done
                 for cpu in $(ls -d ${CPU_BASE}/cpu[0-9]* 2>/dev/null); do
                   MF="${cpu}/cpufreq/scaling_max_freq"
-                  [ -f "${MF}" ] && echo "${CPU_MAX}" > "${MF}" 2>/dev/null || true
+                  CM="${CPU_MAX}"
+                  [ "${CM}" = "auto" ] && CM=$(cat "${cpu}/cpufreq/cpuinfo_max_freq" 2>/dev/null || echo "")
+                  [ -f "${MF}" ] && [ -n "${CM}" ] && echo "${CM}" > "${MF}" 2>/dev/null || true
                 done
 
                 ONLINE=$(cat "${CPU_BASE}/online" 2>/dev/null || echo "?")
@@ -198,8 +247,10 @@ spec:
               # Returns 1 when a write failed (the node can exist before its files are ready).
               apply_gpu_caps() {
                 rc=0
-                echo "${GPU_FREQ}" > "${GPU_DEVFREQ}/max_freq" 2>/dev/null || rc=1
-                echo "${GPU_FREQ}" > "${GPU_DEVFREQ}/min_freq" 2>/dev/null || rc=1
+                GF=$(gpu_target 2>/dev/null) || GF=""
+                [ -n "${GF}" ] || return 1
+                echo "${GF}" > "${GPU_DEVFREQ}/max_freq" 2>/dev/null || rc=1
+                echo "${GF}" > "${GPU_DEVFREQ}/min_freq" 2>/dev/null || rc=1
                 echo "${GPU_GOV}"  > "${GPU_DEVFREQ}/governor"  2>/dev/null || rc=1
                 return "${rc}"
               }
@@ -220,7 +271,7 @@ spec:
                 if [ -d "${GPU_DEVFREQ}" ]; then
                   if [ "${GPU_CAPPED}" = 0 ] && apply_gpu_caps; then
                     GPU_CAPPED=1
-                    echo "[power-mode] GPU devfreq appeared, capped at ${GPU_FREQ} Hz (cur_freq=$(cat "${GPU_DEVFREQ}/cur_freq" 2>/dev/null || echo '?') Hz)"
+                    echo "[power-mode] GPU devfreq appeared, capped at $(gpu_target) Hz (cur_freq=$(cat "${GPU_DEVFREQ}/cur_freq" 2>/dev/null || echo '?') Hz)"
                   fi
                 else
                   GPU_CAPPED=0

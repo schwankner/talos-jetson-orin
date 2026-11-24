@@ -187,10 +187,21 @@ When a pod requests it, containerd reads the CDI spec and injects devices + libs
 - `/dev/nvmap` — GPU memory allocator
 - `/dev/host1x-fence` — host1x sync fences (needed by the CUDA 13 compat driver)
 - `/var/lib/nvidia-tegra-libs/tegra` → `/usr/lib/aarch64-linux-gnu/nvidia` (JetPack r36.5 libs)
+- `/var/lib/nvidia-tegra-libs/nv_tegra_release` → `/etc/nv_tegra_release` (Jetson marker file, see below)
 - `LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:...`
 
 The CDI `LD_LIBRARY_PATH` overrides one set in the pod spec, so library selection is a node-level
 setting in the DaemonSet, not a per-pod one.
+
+`/etc/nv_tegra_release` lets generic images run on the GPU. vLLM detects the CUDA platform through
+NVML, which Tegra does not have, and then falls back to looking for this file. Without it, vLLM from
+PyPI fails at startup with `RuntimeError: Device string must not be empty`. The `cdi-writer` writes the
+file before the spec (`# R36 (release), REVISION: 5.0, ...`, or `R39 ... 2.1` on the r39 line).
+
+After changing `cdi-setup.yaml` or `cdi-setup-r39.yaml`, restart the DaemonSet with
+`kubectl -n nvidia-system rollout restart ds/nvidia-cdi-setup`. `kubectl apply` alone only updates the
+ConfigMap, and the running pod keeps its old scripts. GPU pods that started before the new spec was
+written keep the old injection until they are recreated.
 
 ### CUDA 13 (optional)
 
@@ -237,6 +248,13 @@ The `jetson-power-mode` DaemonSet sets GPU and CPU clocks at boot:
 | 10W | 612 MHz | 1190 MHz | dynamic | Minimum power |
 
 Without MAXN mode, GPU runs at ~400-600 MHz and throughput is roughly halved.
+
+The table is the Orin NX / Orin Nano profile (`p3767` in the device tree). On other Orin modules, such
+as the AGX Orin (`p3701`), the DaemonSet only runs MAXN, at the limits the board reports: the highest
+GPU devfreq frequency, `cpuinfo_max_freq` and all cores online. On an AGX Orin 64 GB that is GPU
+1300.5 MHz, 12 cores at 2201.6 MHz and EMC 3199 MHz. Other `POWER_MODE` values fall back to MAXN with a
+warning there, because their numbers are the Orin NX ones. The log line `Board: ...` shows which
+profile was picked.
 
 ---
 
@@ -370,6 +388,47 @@ This was the root cause before the DRM fix was applied. With the current extensi
 talosctl get extensions --nodes <jetson-ip> | grep nvgpu
 # Expected: nvidia-tegra-nvgpu  5.13.0-drm-noshim-6.18.57-talos
 ```
+
+### Failed GPU pods after a reboot (`UnexpectedAdmissionError`, `NodeShutdown`)
+
+After `talosctl reboot` the GPU workload's namespace can hold a few failed pods. Two different things
+cause them:
+
+- `NodeShutdown`: while the node shuts down, the ReplicaSet keeps creating replacement pods and the
+  kubelet rejects each one. These pods never ran.
+- `UnexpectedAdmissionError` (`Allocate failed due to no healthy devices present`): the kubelet
+  admitted the GPU pod before the device plugin had registered `nvidia.com/gpu` again. The ReplicaSet
+  replaces it, and the next pod starts on the GPU.
+
+The GPU DaemonSets (`device-plugin`, `cdi-setup`, `power-mode`) use `hostNetwork` and no service
+account token, so they do not wait for the CNI or the API server after a boot. On an AGX Orin this cut
+the time between the first rejected GPU pod and the plugin registration from 36 s to 2 s, and the
+earlier storms of dozens of failed pods are gone. One rejected pod can still happen, because the kubelet
+admits the GPU pod in the same second as it starts the plugin. The failed pods are harmless; to remove
+them:
+```bash
+kubectl delete pods -n <namespace> --field-selector=status.phase=Failed
+```
+
+### AGX Orin: black screen and no network at boot
+
+Seen on an AGX Orin 64 GB devkit with UEFI 36.5.0 and a Dell 5K-wide ultrawide monitor on
+DisplayPort: about 6 s after UEFI starts, TrustZone logs `RAS Uncorrectable Error in IOB ... CBB
+Interface Error, ADDR = 0x...13800800` (the T234 display controller) and powers the CPU off. The board
+never reaches Talos, so there is no picture and no network. Without the monitor the board boots
+normally. I have not tested this monitor with the r39 UEFI (39.2.0) yet.
+
+To see why an AGX Orin devkit does not boot, use its micro-USB debug port (it shows up as
+`Tegra On-Platform Operator`, 0955:7045, with four `ttyACM` ports) from an x86-64 Linux host with the
+Jetson Linux BSP:
+```bash
+# MB1 prints plain text on the first port; after MB1 the stream is the muxed TCU protocol
+sudo Linux_for_Tegra/tools/demuxer/nv_tcu_demuxer -d /dev/ttyACMn -s ./console -t
+# Reset, power and recovery mode without touching the board
+sudo Linux_for_Tegra/tools/board_automation/boardctl -t topo reset      # or: recovery, status
+```
+`console/CCPLEX0.txt` then holds MB2, UEFI and the kernel log, `console/TZ.txt` the TrustZone log. The
+`ttyACM` numbers change on every power cycle; `/dev/serial/by-id/` is stable.
 
 ---
 

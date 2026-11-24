@@ -139,6 +139,11 @@ data:
     write_cdi_spec() {
       mkdir -p "${CDI_DIR}"
 
+      # /etc/nv_tegra_release for GPU containers. vLLM (and other JetPack tools) detect a Jetson
+      # through this file when NVML is missing, which it always is on Tegra. Written before the
+      # spec, so the file exists whenever the spec mounts it.
+      echo '# R39 (release), REVISION: 2.1, GCID: 0, BOARD: generic, EABI: aarch64, DATE: n/a' > /host-var/lib/nvidia-tegra-libs/nv_tegra_release
+
       # Open the spec file and write each section with echo/printf.
       # We avoid heredocs because the YAML-in-YAML nesting makes indentation
       # tricky; individual echo statements are unambiguous.
@@ -186,6 +191,9 @@ data:
         echo '        # init container (libcuda and the libraries it needs).'
         echo '        - hostPath: /var/lib/nvidia-tegra-libs/tegra'
         echo '          containerPath: /usr/lib/aarch64-linux-gnu/nvidia'
+        echo '          options: [ro, bind]'
+        echo '        - hostPath: /var/lib/nvidia-tegra-libs/nv_tegra_release'
+        echo '          containerPath: /etc/nv_tegra_release'
         echo '          options: [ro, bind]'
         echo '      env:'
         echo '        # Prepend the r39 libs so they shadow any stubs in the image.'
@@ -262,6 +270,13 @@ spec:
       labels:
         app: nvidia-cdi-setup
     spec:
+      # Boot ordering: this pod needs neither the pod network nor the Kubernetes API. hostNetwork skips
+      # the CNI, which is not ready for the first minute after a reboot (sandbox creation fails with
+      # "network is not ready"), and without the service account token it does not wait for the API
+      # server either. So the GPU is registered and the CDI spec written before GPU workloads start;
+      # otherwise the first GPU pod after a reboot fails with UnexpectedAdmissionError.
+      hostNetwork: true
+      automountServiceAccountToken: false
       tolerations:
         - operator: Exists
       priorityClassName: system-node-critical
