@@ -16,9 +16,10 @@
 #     --config-patch @manifests/talos/machine-patch-cdi.yaml \
 #     --mode=no-reboot
 machine:
-  # kexec_file_load fails on Jetson Orin, and Talos then reverts an upgrade to the
-  # previous UKI while reporting success (BUGS.md Bug 25). With kexec disabled the
-  # upgrade reboots through the firmware into the new image.
+  # kexec_file_load fails on Jetson Orin. Talos up to v1.14.4 then reverts an upgrade
+  # to the previous UKI while reporting success (BUGS.md Bug 25; fixed in v1.14.5).
+  # With kexec disabled, upgrades from older versions reboot through the firmware
+  # into the new image.
   sysctls:
     kernel.kexec_load_disabled: "1"
   install:

@@ -1168,6 +1168,14 @@ size as in 5.12.0, same paths, same softdep file.
 
 ## Bug 25 — `talosctl upgrade` Boots the Old UKI Because a Failed kexec Reverts the Boot Entry (Reports Success Anyway)
 
+**Status: fixed upstream in Talos v1.14.5.** The fix ([siderolabs/talos#14695](https://github.com/siderolabs/talos/pull/14695),
+backported to `release-1.14` as `2f7efe81b`) makes Talos skip kexec when `kexec_file_load` fails with
+`EADDRNOTAVAIL`. The reboot after an upgrade is run by the Talos version that is *running*, so an
+upgrade from v1.14.4 or older still needs the workaround below; from v1.14.5 on it does not.
+`manifests/talos/machine-patch.yaml` keeps `kernel.kexec_load_disabled: "1"` so that nodes coming
+from older versions are covered; with the fix in place it changes nothing, because kexec fails on
+this hardware anyway.
+
 **Symptom**: `talosctl upgrade --wait` finishes with `post check passed` and the node comes back
 Ready, but it still runs the previous image: `talosctl get extensions` shows the old extension, or
 `talosctl version` the old Talos. It hits extension-only upgrades (same Talos version, new UKI named
@@ -1188,8 +1196,9 @@ reboot failed: error running phase 13 in reboot sequence
 `sdboot.Revert()` writes the previous UKI back into `LoaderEntryDefault`. The firmware reboot then
 boots the old image. That image is healthy, so `DropUpgradeFallbackController` clears the upgrade
 tag and nothing reports a problem. Talos already skips kexec quietly for `ENOSYS`, `EPERM` (disabled
-via sysctl) and `EBUSY`; the arm64 `EADDRNOTAVAIL` case is missing. A fix is proposed upstream in
-[siderolabs/talos#14695](https://github.com/siderolabs/talos/pull/14695).
+via sysctl) and `EBUSY`; the arm64 `EADDRNOTAVAIL` case is missing. The fix, by mmalyska, is
+[siderolabs/talos#14695](https://github.com/siderolabs/talos/pull/14695), merged on 2026-10-22 and
+released in v1.14.5.
 
 **Correction**: earlier versions of this entry blamed the Jetson UEFI for not persisting the runtime
 write of `LoaderEntryDefault`. That was wrong. Talos rewrote the variable itself; the machined log
@@ -1207,7 +1216,7 @@ v1.14.0, same-version upgrade with the running installer, 2026-10-21):
 mmalyska saw the same on r39.2 firmware (`39.2.0-gcid-45755727`), including a v1.14.2 to v1.14.4
 upgrade, and confirmed both workarounds below.
 
-**Workaround** (pick one):
+**Workaround** for upgrades from Talos v1.14.4 or older (pick one):
 - Disable kexec on the Jetson node. `manifests/talos/machine-patch.yaml` does this:
   ```yaml
   machine:
@@ -1224,8 +1233,8 @@ upgrade, and confirmed both workarounds below.
 **Recovery** if a node already came back on the old image: apply the sysctl and run the same upgrade
 again, or select the newest `Talos-v...` entry once in the sd-boot menu at boot.
 
-Until the upstream fix lands, `talosctl upgrade --wait` reports success either way, so verify every
-upgrade with `talosctl get extensions` and `talosctl version`.
+On a node that runs v1.14.4 or older, `talosctl upgrade --wait` reports success either way, so
+verify such an upgrade with `talosctl get extensions` and `talosctl version`.
 
 **Validation (2026-09-09)**: after selecting `talos-v1.14.0~4.efi` once in the sd-boot menu the node
 ran extension 5.12.0: `/dev/dri` card0/card1/renderD128, all ten OOT modules loaded with new
