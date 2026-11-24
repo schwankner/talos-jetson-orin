@@ -410,6 +410,26 @@ them:
 kubectl delete pods -n <namespace> --field-selector=status.phase=Failed
 ```
 
+### AGX Orin: black screen and no network at boot
+
+Seen on an AGX Orin 64 GB devkit with UEFI 36.5.0 and a Dell 5K-wide ultrawide monitor on
+DisplayPort: about 6 s after UEFI starts, TrustZone logs `RAS Uncorrectable Error in IOB ... CBB
+Interface Error, ADDR = 0x...13800800` (the T234 display controller) and powers the CPU off. The board
+never reaches Talos, so there is no picture and no network. Without the monitor the board boots
+normally. I have not tested this monitor with the r39 UEFI (39.2.0) yet.
+
+To see why an AGX Orin devkit does not boot, use its micro-USB debug port (it shows up as
+`Tegra On-Platform Operator`, 0955:7045, with four `ttyACM` ports) from an x86-64 Linux host with the
+Jetson Linux BSP:
+```bash
+# MB1 prints plain text on the first port; after MB1 the stream is the muxed TCU protocol
+sudo Linux_for_Tegra/tools/demuxer/nv_tcu_demuxer -d /dev/ttyACMn -s ./console -t
+# Reset, power and recovery mode without touching the board
+sudo Linux_for_Tegra/tools/board_automation/boardctl -t topo reset      # or: recovery, status
+```
+`console/CCPLEX0.txt` then holds MB2, UEFI and the kernel log, `console/TZ.txt` the TrustZone log. The
+`ttyACM` numbers change on every power cycle; `/dev/serial/by-id/` is stable.
+
 ---
 
 ## Related projects
