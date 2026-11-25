@@ -3,7 +3,7 @@
 [![Talos](https://img.shields.io/badge/Talos-v1.14.7-blue)](https://github.com/siderolabs/talos/releases/tag/v1.14.7)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.37.1-blue)](https://kubernetes.io/)
 [![Kernel](https://img.shields.io/badge/kernel-6.18.65--talos-orange)](https://github.com/siderolabs/pkgs)
-[![nvgpu](https://img.shields.io/badge/nvgpu-5.13.0--drm-green)](https://github.com/OE4T/linux-nvgpu)
+[![nvgpu](https://img.shields.io/badge/nvgpu-39.2.1--jp7-green)](https://gitlab.com/nvidia/nv-tegra/tegra/kernel-src/linux-nvgpu)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
 [![Build](https://github.com/schwankner/talos-jetson-orin/actions/workflows/release.yaml/badge.svg)](https://github.com/schwankner/talos-jetson-orin/actions/workflows/release.yaml)
 
@@ -27,30 +27,32 @@ All layers on GPU (`cuda_jetpack6`, SM 8.7), 15.3 GiB VRAM available, MAXN power
 
 Running Jetson Orin GPU in Kubernetes requires solving a problem that standard NVIDIA tooling
 does not address: **the Talos mainline kernel ships a `tegra-drm.ko` that is ABI-incompatible
-with the OE4T-patched `host1x.ko`**, so the DRM render node (`/dev/dri/renderD128`) never
+with NVIDIA's out-of-tree `host1x.ko`**, so the DRM render node (`/dev/dri/renderD128`) never
 appears, and `libcuda.so` cannot enumerate the GPU.
 
-This project builds the **complete OE4T DRM stack** from
-[linux-nv-oot](https://github.com/OE4T/linux-nv-oot) as a Talos system extension:
+This project builds **NVIDIA's complete out-of-tree GPU stack** as a Talos system extension, by
+default from NVIDIA's own JetPack 7.2 sources (`jetson_39.2.1` on
+[gitlab.com/nvidia/nv-tegra](https://gitlab.com/nvidia/nv-tegra)):
 
 ```
-host1x.ko      OE4T — syncpoint allocator (base for all other modules)
-host1x_fence.ko  OE4T — fence/sync primitives
-host1x_nvhost.ko OE4T — bridge between host1x and DRM
-tegra_drm.ko   OE4T — DRM driver (creates /dev/dri/renderD128)
-nvhwpm.ko      OE4T — hardware performance monitoring (tegra-drm dependency)
-nvmap.ko       OE4T — GPU memory allocator
-mc_utils.ko    OE4T — memory controller bandwidth helper
-nvgpu.ko       OE4T — GA10B Ampere CUDA driver
+ivc_ext.ko, tegra_hv.ko  hypervisor helpers (built into NVIDIA's kernel, not into Talos')
+host1x.ko         syncpoint allocator (base for all other modules)
+host1x_fence.ko   fence/sync primitives
+host1x_nvhost.ko  bridge between host1x and DRM
+nvhwpm.ko         hardware performance monitoring (tegra-drm dependency)
+tegra_drm.ko      headless DRM driver (creates /dev/dri/renderD128)
+nvmap.ko          GPU memory allocator
+mc_utils.ko       memory controller bandwidth helper
+nvgpu.ko          GA10B Ampere CUDA driver
 ```
 
-The OE4T `tegra-drm.ko` is built against the OE4T `host1x` ABI, so symbols match. The DRM
-render node appears at boot, and `libcuda.so` from JetPack r36.5 can open it to initialize the GPU.
+`tegra-drm.ko` is built against the same `host1x` ABI, so symbols match. The DRM render node
+appears at boot, and `libcuda.so` from JetPack 7.2 (r39.2.1) can open it to initialize the GPU.
 
 For Kubernetes GPU access, a custom CDI (Container Device Interface) stack injects:
 - All `/dev/nvgpu/igpu0/*` character devices
 - `/dev/dri/renderD128` (DRM render node)
-- JetPack r36.5 userspace libraries (`libcuda.so`, `libnvrm_gpu.so`, etc.) from NVIDIA's APT
+- JetPack userspace libraries (`libcuda.so`, `libnvrm_gpu.so`, etc.) from NVIDIA's APT
 
 No `privileged: true`, no manual `/dev` bind-mounts in pod specs.
 
@@ -67,14 +69,15 @@ NVIDIA currently ships two Jetson Linux lines for Orin:
   Orin NX and Orin Nano next to Thor.
 
 NVIDIA's support covers its own BSP kernel, not Talos, for both lines. This project builds the GPU modules for
-the Talos kernel (6.18) and provides one image per line:
+the Talos kernel (6.18) and provides one image per line. **r39 is the default.**
 
-| | r36 (default) | r39 (opt-in) |
+| | r39 (default) | r36 (optional) |
 |---|---|---|
-| GPU module sources | [OE4T](https://github.com/OE4T) `patches-r36.5` (NVIDIA's r36 sources, ported to newer kernels) | NVIDIA's own `jetson_39.2.1` sources, patched here (OE4T has no r39 branch for Orin) |
-| CUDA driver | 12.6; 13.2 opt-in through [`CUDA_COMPAT`](#cuda-13-optional) | 13.2 |
-| Installer | `custom-installer` | `custom-installer-jp7` |
-| CDI manifest | `manifests/gpu/cdi-setup-r36.yaml` | `manifests/gpu/cdi-setup.yaml` |
+| GPU module sources | NVIDIA's own `jetson_39.2.1` sources, patched here (OE4T has no r39 branch for Orin) | [OE4T](https://github.com/OE4T) `patches-r36.5` (NVIDIA's r36 sources, ported to newer kernels) |
+| CUDA driver | 13.2 | 12.6; 13.2 opt-in through [`CUDA_COMPAT`](#cuda-13-r36-line) |
+| Installer | `custom-installer-jp7` | `custom-installer` |
+| Machine config patch | `manifests/talos/machine-patch.yaml` | `manifests/talos/machine-patch-r36.yaml` |
+| CDI manifest | `manifests/gpu/cdi-setup.yaml` | `manifests/gpu/cdi-setup-r36.yaml` |
 | Tested on | Orin NX 16 GB, AGX Orin 64 GB | Orin NX 16 GB, AGX Orin 64 GB |
 
 - **Same speed.** On the same board and clock, both lines give the same Ollama throughput, and CUDA 12 apps
@@ -85,9 +88,9 @@ the Talos kernel (6.18) and provides one image per line:
 - **One line per node.** Both lines ship modules with the same names, so one image cannot contain both. To
   switch a node, change the module list in the machine config, upgrade to the other installer and apply the
   other CDI manifest ([steps](docs/jetpack7.md#firmware-and-image-combinations)).
-- **Which to use.** r36 is the default and has the longest test history. Use r39 if you want CUDA 13 natively
-  or plan to flash JetPack 7 firmware anyway. Because it runs on both firmware lines, r39 is the candidate for a
-  single image for all Orin boards.
+- **Which to use.** r39: it is NVIDIA's current release for Orin, has CUDA 13.2 natively and runs on both
+  firmware lines, so one image serves all Orin boards. r36 stays available, for example for nodes that must keep
+  the JetPack 6 userspace.
 
 ---
 
@@ -106,7 +109,8 @@ the Talos kernel (6.18) and provides one image per line:
 
 ### 1. Flash the USB image
 
-Download the latest `.raw` from [Releases](https://github.com/schwankner/talos-jetson-orin/releases):
+Download the latest r39 `.raw` (`talos-usb-nvgpu39.2.1-jp7*.raw`) from
+[Releases](https://github.com/schwankner/talos-jetson-orin/releases):
 
 ```bash
 # macOS (replace N with disk number from: diskutil list)
@@ -128,7 +132,7 @@ NODE_IP=<jetson-ip>
 CLUSTER_NAME=jetson
 
 talosctl gen config "${CLUSTER_NAME}" "https://${NODE_IP}:6443" \
-  --config-patch @manifests/talos/machine-patch-r36.yaml \
+  --config-patch @manifests/talos/machine-patch.yaml \
   --config-patch @manifests/talos/machine-patch-cdi.yaml \
   --output-types controlplane \
   --output controlplane.yaml
@@ -142,7 +146,7 @@ export TALOSCONFIG=talosconfig
 # Apply config (installs Talos to NVMe, reboots automatically)
 talosctl apply-config --insecure --nodes "${NODE_IP}" \
   --file controlplane.yaml \
-  --config-patch @manifests/talos/machine-patch-r36.yaml \
+  --config-patch @manifests/talos/machine-patch.yaml \
   --config-patch @manifests/talos/machine-patch-cdi.yaml
 
 # Wait for node to come back, then bootstrap etcd
@@ -157,10 +161,10 @@ talosctl kubeconfig ./kubeconfig --nodes "${NODE_IP}"
 ```bash
 export KUBECONFIG=kubeconfig
 
-# CDI setup: downloads JetPack r36.5 libs, writes CDI spec, sets up firmware
-kubectl apply -f manifests/gpu/cdi-setup-r36.yaml
+# CDI setup: downloads the JetPack 7.2 (r39.2.1) libs, writes CDI spec, sets up firmware
+kubectl apply -f manifests/gpu/cdi-setup.yaml
 
-# Wait for libs to download (~2 min, ~50 MB from NVIDIA APT)
+# Wait for libs to download (~1 min, ~26 MB from NVIDIA APT)
 kubectl rollout status daemonset/nvidia-cdi-setup -n nvidia-system --timeout=300s
 
 # Device plugin: exposes nvidia.com/gpu resource to Kubernetes
@@ -189,28 +193,34 @@ curl -X POST http://${NODE_IP}:31434/api/generate \
 
 Expected: **~65 tok/s** on Orin NX 16 GB.
 
+For the r36 line, use `machine-patch-r36.yaml`, `cdi-setup-r36.yaml` and the r36 image instead.
+
 ---
 
 ## Architecture
 
 ### System extension: nvidia-tegra-nvgpu
 
-Built from OE4T sources ([linux-nv-oot](https://github.com/OE4T/linux-nv-oot),
-[linux-nvgpu](https://github.com/OE4T/linux-nvgpu)), installed as a Talos system extension.
+Built from NVIDIA's out-of-tree sources and installed as a Talos system extension: on the r39
+line from NVIDIA's `jetson_39.2.1` repositories on gitlab.com/nvidia/nv-tegra (`linux-nvgpu`,
+`linux-nv-oot`, `linux-hwpm`), on the r36 line from the OE4T forks
+([linux-nv-oot](https://github.com/OE4T/linux-nv-oot), [linux-nvgpu](https://github.com/OE4T/linux-nvgpu)).
 
 Key insight: the Talos mainline kernel ships `tegra-drm.ko` built against the **vanilla upstream
-`host1x` ABI**. The OE4T `host1x.ko` has extensive GA10B syncpoint changes that break symbol
-compatibility. When the OE4T `host1x.ko` is loaded first, the vanilla `tegra-drm.ko` fails to
-load (`Unknown symbol host1x_job_alloc, err -22`), so `/dev/dri/renderD128` never exists and
+`host1x` ABI**. NVIDIA's out-of-tree `host1x.ko` has extensive GA10B syncpoint changes that break
+symbol compatibility. When it is loaded first, the vanilla `tegra-drm.ko` fails to load
+(`Unknown symbol host1x_job_alloc, err -22`), so `/dev/dri/renderD128` never exists and
 `cuInit` returns `801 = CUDA_ERROR_NOT_SUPPORTED`.
 
-The fix: build `tegra-drm.ko` from the **same OE4T source tree** as `host1x.ko`. They share
-the same ABI — the module loads, the DRM render node appears, CUDA works.
+The fix: build `tegra-drm.ko` from the **same source tree** as `host1x.ko`. They share the same
+ABI — the module loads, the DRM render node appears, CUDA works. `tegra-drm` is built headless,
+without its display code: the Orin display is driven by nvdisplay, not by tegra-drm.
 
 ### CDI (Container Device Interface)
 
 The `nvidia-cdi-setup` DaemonSet:
-1. Downloads real JetPack r36.5 userspace libs from NVIDIA's public APT (`libcuda.so.1.1` = 41 MB)
+1. Downloads real JetPack userspace libs from NVIDIA's public APT (r39.2.1 from the `som` component,
+   about 26 MB; r36.5 on the r36 line)
 2. Syncs GPU firmware to NVMe (avoids `-ETXTBSY` on squashfs inodes); runs on every start, so an
    updated firmware extension replaces the old copies in `/var/fw-fresh` (BUGS.md, Bug 27)
 3. Writes `/var/run/cdi/nvidia-jetson.yaml` — the CDI spec containerd reads per pod
@@ -223,7 +233,7 @@ When a pod requests it, containerd reads the CDI spec and injects devices + libs
 - `/dev/dri/renderD128` — DRM render node (required for `cuInit`)
 - `/dev/nvmap` — GPU memory allocator
 - `/dev/host1x-fence` — host1x sync fences (needed by the CUDA 13 compat driver)
-- `/var/lib/nvidia-tegra-libs/tegra` → `/usr/lib/aarch64-linux-gnu/nvidia` (JetPack r36.5 libs)
+- `/var/lib/nvidia-tegra-libs/tegra` → `/usr/lib/aarch64-linux-gnu/nvidia` (JetPack libs)
 - `/var/lib/nvidia-tegra-libs/nv_tegra_release` → `/etc/nv_tegra_release` (Jetson marker file, see below)
 - `LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:...`
 
@@ -240,9 +250,9 @@ After changing `cdi-setup-r36.yaml` or `cdi-setup.yaml`, restart the DaemonSet w
 ConfigMap, and the running pod keeps its old scripts. GPU pods that started before the new spec was
 written keep the old injection until they are recreated.
 
-### CUDA 13 (optional)
+### CUDA 13 (r36 line)
 
-The default driver is the JetPack r36.5 `libcuda` (CUDA 12.6). NVIDIA's CUDA forward-compatibility
+The r39 line has CUDA 13.2 natively. On the r36 line the driver is the JetPack r36.5 `libcuda` (CUDA 12.6). NVIDIA's CUDA forward-compatibility
 package `cuda-compat-orin-13-2` runs a CUDA 13.2 user-mode driver on top of the same r36.5 BSP and
 kernel modules, so CUDA 13 applications work without a new extension. To turn it on for all GPU
 containers on the node, set `CUDA_COMPAT` in the `restore-libs` init container of
@@ -314,11 +324,11 @@ source scripts/common.sh
 
 **Custom installer image** (for `talosctl upgrade`):
 ```
-ghcr.io/schwankner/custom-installer:v1.14.7-6.18.65-nvgpu5.13.0-drm-noshim
+ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7-headless
 ```
 
-JetPack 7.2 (r39) nodes use the separate repository `custom-installer-jp7`
-(`ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7`). Both lines are built from the
+r36 nodes use the repository `custom-installer`
+(`ghcr.io/schwankner/custom-installer:v1.14.7-6.18.65-nvgpu5.13.0-drm-noshim`). Both lines are built from the
 same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 
 > **Talos ≥ 1.14:** `ghcr.io/siderolabs/installer` is no longer published — released installers
@@ -334,7 +344,7 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 > Talos up to v1.14.4 then reverts the upgrade to the previous image while `talosctl upgrade` still
 > reports success. Talos v1.14.5 and newer skip kexec in that case, but the reboot is run by the
 > version that is installed, so an upgrade *from* an older version still needs kexec disabled.
-> `manifests/talos/machine-patch-r36.yaml` sets `kernel.kexec_load_disabled: "1"`. On a node installed
+> `manifests/talos/machine-patch.yaml` (and `machine-patch-r36.yaml`) sets `kernel.kexec_load_disabled: "1"`. On a node installed
 > before that change, apply it once (no reboot needed):
 > `talosctl patch machineconfig -n <jetson-ip> --patch '{"machine":{"sysctls":{"kernel.kexec_load_disabled":"1"}}}'`,
 > or pass `--reboot-mode powercycle` to `talosctl upgrade`. Verify every upgrade with
@@ -343,18 +353,19 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 
 ---
 
-## Building and running the r39 line
+## Building the two lines
 
-`JETPACK=r39` selects a second build line: the nvgpu driver from NVIDIA's own r39.2.1 sources (package `nvidia-tegra-nvgpu-r39/`, CUDA 13) instead of the OE4T r36.5 one. The default stays `r36`. Status, differences and run history: [docs/jetpack7.md](docs/jetpack7.md).
+`JETPACK` selects the build line: `r39` (default) builds the nvgpu driver from NVIDIA's own r39.2.1 sources (package `nvidia-tegra-nvgpu-r39/`, CUDA 13), `r36` the OE4T r36.5 one (package `nvidia-tegra-nvgpu/`). Status, differences and run history: [docs/jetpack7.md](docs/jetpack7.md).
 
 ```bash
 # CI: a release (tag push / auto-tag) builds both lines; "Build USB Image" → jetpack = both | r36 | r39
-# local: JETPACK=r39 make build-extensions
+# local: make build-extensions            (r39)
+#        JETPACK=r36 make build-extensions
 ```
 
 The r39 installer is published as `custom-installer-jp7`; r36 stays `custom-installer`. The r39 line builds the nvgpu extension and a firmware extension (`scripts/build-r39-firmware.sh`, from the `nvidia-l4t-firmware` deb), and uses `manifests/gpu/cdi-setup.yaml` instead of `cdi-setup-r36.yaml`. As on r36, the userspace libraries are downloaded on the node by the CDI setup's init container, from NVIDIA's apt repository: for r39 they are in the **`som`** component (`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`; there is no `t234` component), version and SHA-256 pinned in the manifest, about 26 MB. `scripts/check-r39-userspace.sh` (workflow "Check r39 userspace", also weekly) runs that very script and verifies the library closure.
 
-Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. The flash is optional: on both the Orin NX and the AGX Orin the r39 image also ran on r36.5 firmware, see [Two driver lines](#two-driver-lines-r36-jetpack-6-and-r39-jetpack-72). Tested on an Orin NX 16 GB (reComputer J401) and an AGX Orin 64 GB devkit: CUDA 13 driver (`cuInit` ok), llama.cpp, Ollama and vLLM on the GPU, load tests without errors; details and the pitfalls I hit in [docs/jetpack7.md](docs/jetpack7.md).
+Running r39 on a node: the board's QSPI can stay on r36.5 firmware or be flashed to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. The flash is optional: on both the Orin NX and the AGX Orin the r39 image also ran on r36.5 firmware, see [Two driver lines](#two-driver-lines-r36-jetpack-6-and-r39-jetpack-72). Tested on an Orin NX 16 GB (reComputer J401) and an AGX Orin 64 GB devkit: CUDA 13 driver (`cuInit` ok), llama.cpp, Ollama and vLLM on the GPU, load tests without errors; details and the pitfalls I hit in [docs/jetpack7.md](docs/jetpack7.md).
 
 ---
 
@@ -365,8 +376,8 @@ Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed
 | Talos Linux | v1.14.7 |
 | Kubernetes | v1.37.1 |
 | Linux kernel | 6.18.65-talos |
-| nvidia-tegra-nvgpu extension | 5.13.0-drm-noshim (r36), 39.2.1-jp7 (r39) |
-| JetPack libs (userspace) | r36.5.0 (r36), r39.2.1 (r39) |
+| nvidia-tegra-nvgpu extension | 39.2.1-jp7-headless (r39, default), 5.13.0-drm-noshim (r36) |
+| JetPack libs (userspace) | r39.2.1 (r39), r36.5.0 (r36) |
 | Ollama | 0.20.5 |
 
 ---
@@ -403,7 +414,7 @@ If `renderD128` is missing, `tegra_drm` failed to load. Check dmesg:
 talosctl dmesg --nodes <jetson-ip> | grep -i "tegra.drm\|host1x"
 ```
 
-### CDI injection fails (`not a device node`)
+### CDI injection fails (`not a device node`, r36 line)
 
 Ensure `/dev/nvhost-ctrl` is not a symlink in the CDI spec. The CDI setup handles this
 automatically — if the error persists, restart the `nvidia-cdi-setup` DaemonSet:
@@ -422,11 +433,11 @@ kubectl logs -n nvidia-system -l app=jetson-power-mode | grep "cur_freq"
 
 ### `cuInit` returns 801 (CUDA_ERROR_NOT_SUPPORTED)
 
-This was the root cause before the DRM fix was applied. With the current extension
-(`nvgpu5.13.0-drm-noshim`), this should not occur. Verify the correct extension is loaded:
+This was the root cause before the DRM fix was applied. With the current extensions, this should
+not occur. Verify the correct extension is loaded:
 ```bash
 talosctl get extensions --nodes <jetson-ip> | grep nvgpu
-# Expected: nvidia-tegra-nvgpu  5.13.0-drm-noshim-6.18.65-talos
+# Expected: nvidia-tegra-nvgpu  39.2.1-jp7-headless-6.18.65-talos   (r36: 5.13.0-drm-noshim-6.18.65-talos)
 ```
 
 ### Failed GPU pods after a reboot (`UnexpectedAdmissionError`, `NodeShutdown`)
@@ -475,8 +486,9 @@ sudo Linux_for_Tegra/tools/board_automation/boardctl -t topo reset      # or: re
 ## Related projects
 
 - [siderolabs/pkgs](https://github.com/siderolabs/pkgs) — Talos kernel and system extension framework
-- [OE4T/linux-nv-oot](https://github.com/OE4T/linux-nv-oot) — NVIDIA out-of-tree drivers for Tegra
-- [OE4T/linux-nvgpu](https://github.com/OE4T/linux-nvgpu) — NVIDIA GPU driver for Tegra
+- [gitlab.com/nvidia/nv-tegra](https://gitlab.com/nvidia/nv-tegra) — NVIDIA's own Jetson kernel sources (r39 line)
+- [OE4T/linux-nv-oot](https://github.com/OE4T/linux-nv-oot) — NVIDIA out-of-tree drivers for Tegra (r36 line)
+- [OE4T/linux-nvgpu](https://github.com/OE4T/linux-nvgpu) — NVIDIA GPU driver for Tegra (r36 line)
 
 ---
 
@@ -484,5 +496,5 @@ sudo Linux_for_Tegra/tools/board_automation/boardctl -t topo reset      # or: re
 
 MPL 2.0. See [LICENSE](LICENSE).
 
-NVIDIA kernel modules are built from OE4T open-source repositories and distributed in object form
+NVIDIA kernel modules are built from NVIDIA's open-source repositories (r39) and the OE4T forks (r36) and distributed in object form
 under the terms of the GPU License Agreement (GLA).

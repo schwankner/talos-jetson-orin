@@ -1,27 +1,28 @@
-# JetPack 7.2 (Jetson Linux r39 / CUDA 13) on Orin — opt-in build line
+# JetPack 7.2 (Jetson Linux r39 / CUDA 13) on Orin — the default build line
 
-`JETPACK=r39` selects a second build line. The default stays `r36` (JetPack 6.x, OE4T r36.5 sources) and
-nothing about the r36 line changes. The r39 line builds the GPU driver from NVIDIA's own r39.2.1 sources and
-uses the r39 userspace, which provides the CUDA 13 driver libraries.
+r39 is the default build line (`JETPACK=r39`, since 2026-11-25). It builds the GPU driver from NVIDIA's own
+r39.2.1 sources and uses the r39 userspace, which provides the CUDA 13 driver libraries. The r36 line (JetPack 6.x,
+OE4T r36.5 sources) stays available with `JETPACK=r36` and is unchanged.
 
-**Status.** Tested on an Orin NX 16 GB (Seeed reComputer J401) with Talos v1.14.2 / kernel 6.18.54: the board's
+**Status (first test).** Tested on an Orin NX 16 GB (Seeed reComputer J401) with Talos v1.14.2 / kernel 6.18.54: the board's
 QSPI flashed to r39.2.0, all modules load, `cuInit` succeeds, llama.cpp (a CUDA 12.6 container image) runs on the
 GPU at about 22 tok/s generation for an 8B MoE model, a 2-hour mixed-prompt load test ran without errors or
 kernel faults, and the node cold-booted cleanly after a power loss. CUDA 13 *container* images were not tried.
 
 ## What is different from r36
 
-| | r36 (default) | r39 (`JETPACK=r39`) |
+| | r36 (`JETPACK=r36`) | r39 (default) |
 |---|---|---|
 | nvgpu package | `nvidia-tegra-nvgpu/` (OE4T `patches-r36.5`) | `nvidia-tegra-nvgpu-r39/` (NVIDIA gitlab, tag `jetson_39.2.1`) |
-| Installer image | `custom-installer:<talos>-<kernel>-nvgpu5.13.0-drm-noshim` | `custom-installer-jp7:<talos>-<kernel>-nvgpu39.2.1-jp7` |
-| Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-<kernel>-talos` |
+| Installer image | `custom-installer:<talos>-<kernel>-nvgpu5.13.0-drm-noshim` | `custom-installer-jp7:<talos>-<kernel>-nvgpu39.2.1-jp7-headless` |
+| Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-headless-<kernel>-talos` |
+| Machine config patch | `manifests/talos/machine-patch-r36.yaml` | `manifests/talos/machine-patch.yaml` |
 | Firmware extension | `nvidia-firmware-ext:v5` (r36 apt, component `t234`) | `nvidia-firmware-ext:r39-v1` (`scripts/build-r39-firmware.sh`) |
 | Userspace libraries | downloaded on the node (`t234` apt) | downloaded on the node (`som` apt, `manifests/gpu/cdi-setup.yaml`) |
 | Board firmware (QSPI) | JetPack 6 (also ran on r39.2.0) | JetPack 7 (r39.2.0) or JetPack 6 (r36.5); both tested on Orin NX and AGX Orin, see [Firmware and image combinations](#firmware-and-image-combinations) |
 
-The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer are shared by both lines. With
-`JETPACK=r39` the build reuses them when they are already in the registry.
+The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer are shared by both lines. The r39
+build reuses them when they are already in the registry.
 
 ## Using it
 
@@ -29,8 +30,8 @@ The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer 
 # CI: a release (tag push, or the auto-tag dispatch after a Talos bump) builds both lines in one run:
 #     r36 first, then r39, which reuses the shared kernel / kernel-modules-clang / base installer.
 #     "Build USB Image" -> jetpack = both (default) | r36 | r39 builds one or both by hand;
-#     "Build Extensions" builds a single line (jetpack = r36 | r39).
-# local: JETPACK=r39 make build-extensions
+#     "Build Extensions" builds a single line (jetpack = r39 | r36).
+# local: make build-extensions (r39), JETPACK=r36 make build-extensions
 ```
 
 Each line publishes its installer to its own repository, so the two never share a tag: r36 keeps
@@ -43,9 +44,9 @@ Talos version and verify the node against that version, so a node can follow its
 `image: ghcr.io/<owner>/custom-installer-jp7:<talos>` and never cross to the other line. The alias is mutable (the latest
 build of that Talos version); the compound tag stays the build's identity.
 
-On the node: flash the board's QSPI (below), install the r39 installer image, and apply
-`manifests/gpu/cdi-setup.yaml` instead of `cdi-setup-r36.yaml`. The machine config's kernel module list for
-r39 is, in this order: `ivc_ext`, `tegra_hv`, `host1x`, `host1x_nvhost`, `host1x_fence`, `nvhwpm`, `tegra_drm`,
+On the node: install the r39 installer image with `manifests/talos/machine-patch.yaml` and apply
+`manifests/gpu/cdi-setup.yaml`. Flashing the board's QSPI (below) is optional: the r39 image also runs on r36.5
+firmware. The machine config's kernel module list for r39 is, in this order: `ivc_ext`, `tegra_hv`, `host1x`, `host1x_nvhost`, `host1x_fence`, `nvhwpm`, `tegra_drm`,
 `nvmap`, `mc_utils`, `nvgpu`, `governor_pod_scaling` (the `modprobe.d` softdeps in the extension also make
 `modprobe` pull the dependencies in).
 
@@ -72,6 +73,10 @@ replace the three URLs and checksums in `nvidia-tegra-nvgpu-r39/pkg.yaml`.
   `host1x/dev.c` misses a struct field, without the second modpost reports `tegra_mipi_driver` as undefined).
 - Two extra modules: `tegra_hv` and `ivc_ext`. NVIDIA's kernel has these symbols built in; the Talos kernel does
   not. Both stay inert on bare metal.
+- tegra-drm without its display code: `CONFIG_DRM_TEGRA_HAVE_DISPLAY` is cleared for that one directory (make
+  variable and `-D` flag), so `dc`, `hub`, `sor` and the other display objects are not built. The Orin display is
+  driven by nvdisplay, not by tegra-drm; the flag only guards tegra-drm internals and one host1x prototype, so
+  host1x keeps it. That display code also does not build on Linux 7.3 (since `39.2.1-jp7-headless`).
 - `patches/nvidia-oot/0001-tegra-drm-headless-no-fbdev.patch` (same idea as the r36 patch: no fbdev emulation)
   and `0002-nvmap-ivc-stubs-without-sciipc.patch` (nvmap calls IVC functions that need NvSciIpc, which is not
   built; no-op stubs, no inter-VM sharing). `CONFIG_*_SCIIPC` is off.

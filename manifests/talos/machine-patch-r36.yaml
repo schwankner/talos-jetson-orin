@@ -1,4 +1,4 @@
-# Talos machine config patch — Jetson Orin (all SKUs)
+# Talos machine config patch — Jetson Orin (all SKUs), JetPack 6 / r36 line (optional)
 #
 # Sets installer image + kernel module load order for the OE4T GPU stack.
 # Apply together with machine-patch-cdi.yaml for full GPU container support.

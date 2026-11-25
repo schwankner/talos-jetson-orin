@@ -1,5 +1,5 @@
 ---
-# nvidia-cdi-setup — one-time GPU system setup + CDI spec writer
+# nvidia-cdi-setup (JetPack r36 / JetPack 6, optional line) — one-time GPU system setup + CDI spec writer
 #
 # Runs on every node at system-node-critical priority and handles all setup
 # required before CUDA containers can start:
@@ -22,7 +22,7 @@
 #
 #
 # Apply:
-#   kubectl apply -f manifests/gpu/cdi-setup.yaml
+#   kubectl apply -f manifests/gpu/cdi-setup-r36.yaml   (r36 image only; the default r39 line uses cdi-setup.yaml)
 #   (called automatically by scripts/10-setup-cdi.sh)
 ---
 apiVersion: v1

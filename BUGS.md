@@ -1172,7 +1172,7 @@ size as in 5.12.0, same paths, same softdep file.
 backported to `release-1.14` as `2f7efe81b`) makes Talos skip kexec when `kexec_file_load` fails with
 `EADDRNOTAVAIL`. The reboot after an upgrade is run by the Talos version that is *running*, so an
 upgrade from v1.14.4 or older still needs the workaround below; from v1.14.5 on it does not.
-`manifests/talos/machine-patch-r36.yaml` keeps `kernel.kexec_load_disabled: "1"` so that nodes coming
+`manifests/talos/machine-patch.yaml` (and `machine-patch-r36.yaml`) keeps `kernel.kexec_load_disabled: "1"` so that nodes coming
 from older versions are covered; with the fix in place it changes nothing, because kexec fails on
 this hardware anyway.
 

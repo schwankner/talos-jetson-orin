@@ -1,7 +1,7 @@
 ---
-# nvidia-cdi-setup (JetPack r39 / JetPack 7.2) — GPU system setup + CDI spec writer
+# nvidia-cdi-setup (JetPack r39 / JetPack 7.2, default line) — GPU system setup + CDI spec writer
 #
-# Same job as manifests/gpu/cdi-setup.yaml, for the r39 image (see docs/jetpack7.md). Differences:
+# Same job as manifests/gpu/cdi-setup-r36.yaml (r36 line), for the r39 image (see docs/jetpack7.md). Differences:
 #
 #   1. Libraries come from NVIDIA's apt repository, component "som" (not "t234", which does not
 #      exist for r39): nvidia-l4t-core, nvidia-l4t-cuda-nvgpu and nvidia-l4t-cuda, about 26 MB.
@@ -24,7 +24,7 @@
 #      that actually exist) and keeps it alive across tmpfs resets.
 #
 # Apply (JetPack r39 image only; do not apply together with the r36 manifest):
-#   kubectl apply -f manifests/gpu/cdi-setup-r39.yaml
+#   kubectl apply -f manifests/gpu/cdi-setup.yaml
 ---
 apiVersion: v1
 kind: Namespace

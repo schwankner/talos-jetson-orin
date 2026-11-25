@@ -3,7 +3,7 @@
 #
 # This manifest relies on the Container Device Interface stack set up by:
 #
-#   manifests/gpu/cdi-setup-r36.yaml      — writes /var/run/cdi/nvidia-jetson.yaml
+#   manifests/gpu/cdi-setup.yaml (r36: cdi-setup-r36.yaml) — writes /var/run/cdi/nvidia-jetson.yaml
 #   manifests/gpu/device-plugin.yaml  — exposes nvidia.com/gpu resource
 #   manifests/talos/machine-patch-cdi.yaml — enables CDI in containerd
 #
