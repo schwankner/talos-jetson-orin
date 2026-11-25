@@ -6,7 +6,7 @@
 #   TALOS_VERSION    Talos release                              (default: v1.12.6)
 #   KERNEL_VERSION   Linux kernel version                       (default: 6.18.18)
 #   NVGPU_VERSION    nvidia-tegra-nvgpu extension version       (default: 5.1.0)
-#   JETPACK          r36 (JetPack 6.x, default) or r39 (JetPack 7.2, docs/jetpack7.md)
+#   JETPACK          r39 (JetPack 7.2, default, docs/jetpack7.md) or r36 (JetPack 6.x)
 
 .PHONY: all keys build-extensions build-kernel uki usb help clean
 
@@ -54,7 +54,7 @@ help:
 	@echo "  Key overrides:"
 	@echo "    REGISTRY=<host:port>  Local OCI registry (default: 192.168.1.100:5001)"
 	@echo "    NVGPU_VERSION=<ver>   nvgpu extension version (default: 5.1.0)"
-	@echo "    JETPACK=r39           build the JetPack 7.2 line (default r36)"
+	@echo "    JETPACK=r36           build the JetPack 6 line (default r39)"
 	@echo ""
 	@echo "  Alternative: use GitHub Actions (.github/workflows/build-usb.yaml)"
 	@echo "    Push a tag → USB image built in the cloud, uploaded as release artifact"

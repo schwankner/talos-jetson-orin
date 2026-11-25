@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-r39-userspace.sh — run the restore-libs.sh of manifests/gpu/cdi-setup-r39.yaml (the very
+# check-r39-userspace.sh — run the restore-libs.sh of manifests/gpu/cdi-setup.yaml (the very
 # script the node's init container runs) against NVIDIA's apt repository and verify the result:
 # AArch64 ELF files, libcuda.so.1 present and large, the two libraries libcuda dlopen()s at cuInit,
 # the PTX JIT compiler (needed by any kernel without native sm_87 code),
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MANIFEST="${ROOT}/manifests/gpu/cdi-setup-r39.yaml"
+MANIFEST="${ROOT}/manifests/gpu/cdi-setup.yaml"
 WORK="${1:-$(mktemp -d)}"
 DEST="${WORK}/tegra"
 mkdir -p "${WORK}"

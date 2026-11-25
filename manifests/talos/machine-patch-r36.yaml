@@ -1,0 +1,43 @@
+# Talos machine config patch — Jetson Orin (all SKUs), JetPack 6 / r36 line (optional)
+#
+# Sets installer image + kernel module load order for the OE4T GPU stack.
+# Apply together with machine-patch-cdi.yaml for full GPU container support.
+#
+# How to apply (fresh install, maintenance mode):
+#   talosctl apply-config --insecure --nodes <jetson-ip> \
+#     --file controlplane.yaml \
+#     --config-patch @manifests/talos/machine-patch-r36.yaml \
+#     --config-patch @manifests/talos/machine-patch-cdi.yaml
+#
+# How to apply (running node, no-reboot):
+#   talosctl apply-config --nodes <jetson-ip> --talosconfig ./talosconfig \
+#     --file controlplane.yaml \
+#     --config-patch @manifests/talos/machine-patch-r36.yaml \
+#     --config-patch @manifests/talos/machine-patch-cdi.yaml \
+#     --mode=no-reboot
+machine:
+  # kexec_file_load fails on Jetson Orin. Talos up to v1.14.4 then reverts an upgrade
+  # to the previous UKI while reporting success (BUGS.md Bug 25; fixed in v1.14.5).
+  # With kexec disabled, upgrades from older versions reboot through the firmware
+  # into the new image.
+  sysctls:
+    kernel.kexec_load_disabled: "1"
+  install:
+    disk: /dev/nvme0n1
+    image: ghcr.io/schwankner/custom-installer:v1.14.7-6.18.65-nvgpu5.13.0-drm-noshim
+    wipe: false
+  kernel:
+    modules:
+      # OE4T host1x stack (prerequisite for all GPU modules)
+      - name: host1x
+      - name: host1x_fence
+      - name: host1x_nvhost
+      # OE4T DRM stack — creates /dev/dri/renderD128 (required for CUDA via libcuda.so)
+      - name: tegra_drm
+      # GPU memory + bandwidth
+      - name: nvmap
+      - name: mc_utils
+      # Main CUDA driver (GA10B / Ampere)
+      - name: nvgpu
+      # GPU frequency scaling governor
+      - name: governor_pod_scaling

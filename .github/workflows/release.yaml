@@ -268,12 +268,12 @@ jobs:
             echo
             echo "| Line | Image | Installer (for \`talosctl upgrade\`) | nvidia-tegra-nvgpu |"
             echo "|------|-------|-------------------------------------|--------------------|"
-            for line in r36 r39; do
+            for line in r39 r36; do
               ( export JETPACK="${line}"; source scripts/common.sh
                 img=$(ls usb/talos-usb-nvgpu${NVGPU_VERSION}.raw* 2>/dev/null | head -1 || true)
                 [ -n "${img}" ] || exit 0
                 inst="ghcr.io/${GITHUB_REPOSITORY_OWNER}/${INSTALLER_REPO}:${TALOS_VERSION}-${KERNEL_VERSION}-nvgpu${NVGPU_VERSION}"
-                label="r36 — JetPack 6.x (default)"; [ "${line}" = r39 ] && label="r39 — JetPack 7.2 (CUDA 13)"
+                label="r36 — JetPack 6.x"; [ "${line}" = r39 ] && label="r39 — JetPack 7.2, CUDA 13 (default)"
                 echo "| ${label} | \`$(basename "${img}")\` | \`${inst}\` | \`${NVGPU_VERSION}\` |"
               )
             done
@@ -287,10 +287,11 @@ jobs:
             echo "| Jetson Orin NX 8 GB | ✅ Compatible (same SoC/GPU) |"
             echo "| Jetson Orin Nano 8 GB | ✅ Compatible (same SoC/GPU) |"
             echo "| Jetson Orin Nano 4 GB | ✅ Compatible (same SoC/GPU) |"
-            echo "| Jetson AGX Orin (all SKUs) | ✅ Compatible (same SoC/GPU) |"
+            echo "| Jetson AGX Orin 64 GB (devkit) | ✅ Tested |"
+            echo "| Jetson AGX Orin (other SKUs) | ✅ Compatible (same SoC/GPU) |"
             echo "| Xavier / TX2 / Nano (classic) | ❌ Different GPU architecture |"
             echo
-            echo "The r39 line needs JetPack 7 firmware in the board's QSPI — see docs/jetpack7.md before flashing."
+            echo "Both lines are tested on r36.5 and r39.2.0 QSPI firmware (Orin NX and AGX Orin) — see docs/jetpack7.md."
             echo
             echo "### Flash"
             echo '```bash'

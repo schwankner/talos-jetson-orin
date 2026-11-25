@@ -51,13 +51,13 @@ fi
 LLVM_IMAGE="${LLVM_IMAGE:-ghcr.io/siderolabs/llvm}"  # informational only
 
 # ── JetPack line ─────────────────────────────────────────────────────────────
-# r36 (default): JetPack 6.x userspace, OE4T-patched nvgpu, package nvidia-tegra-nvgpu/.
-# r39: JetPack 7.2 / Jetson Linux r39.2.1 (CUDA 13), package nvidia-tegra-nvgpu-r39/, built
-# from NVIDIA's own sources (see docs/jetpack7.md). Select with JETPACK=r39. Only the nvgpu
+# r39 (default): JetPack 7.2 / Jetson Linux r39.2.1 (CUDA 13), package nvidia-tegra-nvgpu-r39/,
+# built from NVIDIA's own sources (see docs/jetpack7.md).
+# r36: JetPack 6.x userspace, OE4T-patched nvgpu, package nvidia-tegra-nvgpu/. Select with JETPACK=r36. Only the nvgpu
 # package, the firmware extension and the version strings differ; the kernel, the in-tree
 # modules and the base installer are shared. The r39 defaults are set before the r36 ones
 # below, so an explicit NVGPU_VERSION / FIRMWARE_EXT_TAG in the environment still wins.
-JETPACK="${JETPACK:-r36}"
+JETPACK="${JETPACK:-r39}"
 NVGPU_PKG="nvidia-tegra-nvgpu"
 # Image repository of the final (extensions baked in) installer. Each line publishes to its own
 # repository so both can be built from one release run: r36 -> custom-installer (unchanged),
@@ -68,9 +68,9 @@ case "${JETPACK}" in
   r39)
     NVGPU_PKG="nvidia-tegra-nvgpu-r39"
     INSTALLER_REPO="custom-installer-jp7"
-    : "${NVGPU_VERSION:=39.2.1-jp7}"
+    : "${NVGPU_VERSION:=39.2.1-jp7-headless}"
     : "${FIRMWARE_EXT_TAG:=r39-v1}"   # scripts/build-r39-firmware.sh; the userspace libraries are
-                                      # downloaded on the node by manifests/gpu/cdi-setup-r39.yaml
+                                      # downloaded on the node by manifests/gpu/cdi-setup.yaml
     ;;
   *) echo "[ERROR] JETPACK must be r36 or r39, got '${JETPACK}'" >&2; exit 1 ;;
 esac
