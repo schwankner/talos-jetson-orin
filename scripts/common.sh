@@ -23,7 +23,6 @@ TALOS_VERSION="${TALOS_VERSION:-v1.15.0-beta.0}"  # TEST: r39 on Linux 7.3, do n
 # can never desync from TALOS_VERSION again: whatever Renovate bumps it to,
 # PKGS_COMMIT (and KERNEL_VERSION below) follows automatically.
 # Override via env: PKGS_COMMIT=<sha> source scripts/common.sh
-PKGS_COMMIT="${PKGS_COMMIT:-9e21a45}"  # TEST: pkgs main (Linux 7.3.6) for the r39 pkgs PR, do not merge
 if [ -z "${PKGS_COMMIT:-}" ]; then
   PKGS_COMMIT="$(curl -fsSL \
     "https://raw.githubusercontent.com/siderolabs/talos/${TALOS_VERSION}/Makefile" \
@@ -69,7 +68,7 @@ case "${JETPACK}" in
   r39)
     NVGPU_PKG="nvidia-tegra-nvgpu-r39"
     INSTALLER_REPO="custom-installer-jp7"
-    : "${NVGPU_VERSION:=39.2.1-jp7-pkgspr-test}"  # TEST
+    : "${NVGPU_VERSION:=39.2.1-jp7-pkgspr-731}"  # TEST
     : "${FIRMWARE_EXT_TAG:=r39-v1}"   # scripts/build-r39-firmware.sh; the userspace libraries are
                                       # downloaded on the node by manifests/gpu/cdi-setup-r39.yaml
     ;;
