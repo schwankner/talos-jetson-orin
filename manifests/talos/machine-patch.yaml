@@ -1,7 +1,8 @@
-# Talos machine config patch — Jetson Orin (all SKUs)
+# Talos machine config patch — Jetson Orin (all SKUs), JetPack 7.2 / r39 (default line)
 #
-# Sets installer image + kernel module load order for the OE4T GPU stack.
+# Sets installer image + kernel module load order for the r39 GPU stack.
 # Apply together with machine-patch-cdi.yaml for full GPU container support.
+# The r36 (JetPack 6) line uses machine-patch-r36.yaml instead (see README, "Two driver lines").
 #
 # How to apply (fresh install, maintenance mode):
 #   talosctl apply-config --insecure --nodes <jetson-ip> \
@@ -24,15 +25,21 @@ machine:
     kernel.kexec_load_disabled: "1"
   install:
     disk: /dev/nvme0n1
-    image: ghcr.io/schwankner/custom-installer:v1.14.7-6.18.65-nvgpu5.13.0-drm-noshim
+    image: ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7-headless
     wipe: false
   kernel:
     modules:
-      # OE4T host1x stack (prerequisite for all GPU modules)
+      # Hypervisor helpers: NVIDIA's kernel has these built in, the Talos kernel does not.
+      # On bare metal they only have to be loaded (nvgpu, tegra-drm and nvmap use their exports).
+      - name: ivc_ext
+      - name: tegra_hv
+      # host1x stack (prerequisite for all GPU modules)
       - name: host1x
-      - name: host1x_fence
       - name: host1x_nvhost
-      # OE4T DRM stack — creates /dev/dri/renderD128 (required for CUDA via libcuda.so)
+      - name: host1x_fence
+      # hardware performance monitor (tegra-drm depends on it)
+      - name: nvhwpm
+      # headless DRM — creates /dev/dri/renderD128 (required for CUDA via libcuda.so)
       - name: tegra_drm
       # GPU memory + bandwidth
       - name: nvmap

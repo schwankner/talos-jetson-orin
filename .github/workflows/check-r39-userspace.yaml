@@ -2,7 +2,7 @@ name: Check r39 userspace
 
 # Verifies the pieces of the JetPack r39 GPU userspace that come from NVIDIA's apt repository
 # (component "som" of r39.2), without a kernel build and without pushing anything:
-#   - scripts/check-r39-userspace.sh runs the restore-libs.sh of manifests/gpu/cdi-setup-r39.yaml
+#   - scripts/check-r39-userspace.sh runs the restore-libs.sh of manifests/gpu/cdi-setup.yaml
 #     (the script the node's init container runs): pinned package SHA-256, the libcuda closure,
 #     the libraries libcuda dlopen()s at cuInit;
 #   - scripts/build-r39-firmware.sh assembles the nvidia-firmware-ext extension (no push).
@@ -11,7 +11,7 @@ name: Check r39 userspace
 on:
   pull_request:
     paths:
-      - manifests/gpu/cdi-setup-r39.yaml
+      - manifests/gpu/cdi-setup.yaml
       - scripts/check-r39-userspace.sh
       - scripts/build-r39-firmware.sh
       - scripts/common.sh

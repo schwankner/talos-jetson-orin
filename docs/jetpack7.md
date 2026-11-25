@@ -17,7 +17,7 @@ kernel faults, and the node cold-booted cleanly after a power loss. CUDA 13 *con
 | Installer image | `custom-installer:<talos>-<kernel>-nvgpu5.13.0-drm-noshim` | `custom-installer-jp7:<talos>-<kernel>-nvgpu39.2.1-jp7` |
 | Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-<kernel>-talos` |
 | Firmware extension | `nvidia-firmware-ext:v5` (r36 apt, component `t234`) | `nvidia-firmware-ext:r39-v1` (`scripts/build-r39-firmware.sh`) |
-| Userspace libraries | downloaded on the node (`t234` apt) | downloaded on the node (`som` apt, `manifests/gpu/cdi-setup-r39.yaml`) |
+| Userspace libraries | downloaded on the node (`t234` apt) | downloaded on the node (`som` apt, `manifests/gpu/cdi-setup.yaml`) |
 | Board firmware (QSPI) | JetPack 6 (also ran on r39.2.0) | JetPack 7 (r39.2.0) or JetPack 6 (r36.5); both tested on Orin NX and AGX Orin, see [Firmware and image combinations](#firmware-and-image-combinations) |
 
 The kernel, the in-tree modules (`kernel-modules-clang`) and the base installer are shared by both lines. With
@@ -44,7 +44,7 @@ Talos version and verify the node against that version, so a node can follow its
 build of that Talos version); the compound tag stays the build's identity.
 
 On the node: flash the board's QSPI (below), install the r39 installer image, and apply
-`manifests/gpu/cdi-setup-r39.yaml` instead of `cdi-setup.yaml`. The machine config's kernel module list for
+`manifests/gpu/cdi-setup.yaml` instead of `cdi-setup-r36.yaml`. The machine config's kernel module list for
 r39 is, in this order: `ivc_ext`, `tegra_hv`, `host1x`, `host1x_nvhost`, `host1x_fence`, `nvhwpm`, `tegra_drm`,
 `nvmap`, `mc_utils`, `nvgpu`, `governor_pod_scaling` (the `modprobe.d` softdeps in the extension also make
 `modprobe` pull the dependencies in).
@@ -82,7 +82,7 @@ replace the three URLs and checksums in `nvidia-tegra-nvgpu-r39/pkg.yaml`.
 ## Userspace and firmware
 
 r39 has no `t234` apt component. The Orin packages are in the **`som`** component:
-`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`. `manifests/gpu/cdi-setup-r39.yaml` downloads three
+`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`. `manifests/gpu/cdi-setup.yaml` downloads three
 debs (`nvidia-l4t-core`, `nvidia-l4t-cuda-nvgpu`, `nvidia-l4t-cuda`, 26 MB, version and SHA-256 pinned in the
 script) once per version and installs the closure of `libcuda.so.1` into `/var/lib/nvidia-tegra-libs/tegra`.
 It also takes `libnvidia-ptxjitcompiler` from the `cuda-compat-13-2` package of the **`common`** component (88 MB
@@ -205,9 +205,9 @@ Flashing the J401 back to r36.5 (Seeed `Linux_for_Tegra` branch `r36.5.0` on top
   first time, delete the r36 `nvidia-cdi-setup` DaemonSet and scale the GPU workloads to 0. Otherwise the r36
   DaemonSet points `firmware_class.path` at the stale r36 GA10B firmware in `/var/fw-fresh`, which is the
   hard-reset case described under "Userspace and firmware". After the upgrade apply
-  `manifests/gpu/cdi-setup-r39.yaml`: it replaces the firmware files in `/var/fw-fresh` and installs the r39
+  `manifests/gpu/cdi-setup.yaml`: it replaces the firmware files in `/var/fw-fresh` and installs the r39
   userspace libraries, then start the workloads again.
-- **One JetPack line per cluster.** `cdi-setup-r39.yaml` uses the same names as `cdi-setup.yaml` (namespace
+- **One JetPack line per cluster.** `cdi-setup.yaml` uses the same names as `cdi-setup-r36.yaml` (namespace
   `nvidia-system`, ConfigMap `nvidia-cdi-setup-scripts`, DaemonSet `nvidia-cdi-setup`, host directory
   `/var/lib/nvidia-tegra-libs`), so applying one replaces the other. A cluster runs one line at a time, and the CDI
   manifest must match it: nothing stops the r39 DaemonSet from landing on an r36 node.

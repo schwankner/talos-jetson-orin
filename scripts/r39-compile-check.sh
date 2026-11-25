@@ -57,7 +57,7 @@ cp -r "${PKG_DIR}/." /pkg/
 # ── kernel build tree: Talos config + modules_prepare ────────────────────────
 KTAR="${WORK}/linux-${KERNEL_VERSION}.tar.xz"
 [ -f "${KTAR}" ] || curl -fsSL -o "${KTAR}" \
-  "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
+  "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION%%.*}.x/linux-${KERNEL_VERSION}.tar.xz"
 tar xf "${KTAR}" -C /src --strip-components=1
 curl -fsSL "https://raw.githubusercontent.com/siderolabs/pkgs/${PKGS_COMMIT}/kernel/build/config-arm64" \
   -o /src/.config

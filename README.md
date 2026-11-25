@@ -74,7 +74,7 @@ the Talos kernel (6.18) and provides one image per line:
 | GPU module sources | [OE4T](https://github.com/OE4T) `patches-r36.5` (NVIDIA's r36 sources, ported to newer kernels) | NVIDIA's own `jetson_39.2.1` sources, patched here (OE4T has no r39 branch for Orin) |
 | CUDA driver | 12.6; 13.2 opt-in through [`CUDA_COMPAT`](#cuda-13-optional) | 13.2 |
 | Installer | `custom-installer` | `custom-installer-jp7` |
-| CDI manifest | `manifests/gpu/cdi-setup.yaml` | `manifests/gpu/cdi-setup-r39.yaml` |
+| CDI manifest | `manifests/gpu/cdi-setup-r36.yaml` | `manifests/gpu/cdi-setup.yaml` |
 | Tested on | Orin NX 16 GB, AGX Orin 64 GB | Orin NX 16 GB, AGX Orin 64 GB |
 
 - **Same speed.** On the same board and clock, both lines give the same Ollama throughput, and CUDA 12 apps
@@ -128,7 +128,7 @@ NODE_IP=<jetson-ip>
 CLUSTER_NAME=jetson
 
 talosctl gen config "${CLUSTER_NAME}" "https://${NODE_IP}:6443" \
-  --config-patch @manifests/talos/machine-patch.yaml \
+  --config-patch @manifests/talos/machine-patch-r36.yaml \
   --config-patch @manifests/talos/machine-patch-cdi.yaml \
   --output-types controlplane \
   --output controlplane.yaml
@@ -142,7 +142,7 @@ export TALOSCONFIG=talosconfig
 # Apply config (installs Talos to NVMe, reboots automatically)
 talosctl apply-config --insecure --nodes "${NODE_IP}" \
   --file controlplane.yaml \
-  --config-patch @manifests/talos/machine-patch.yaml \
+  --config-patch @manifests/talos/machine-patch-r36.yaml \
   --config-patch @manifests/talos/machine-patch-cdi.yaml
 
 # Wait for node to come back, then bootstrap etcd
@@ -158,7 +158,7 @@ talosctl kubeconfig ./kubeconfig --nodes "${NODE_IP}"
 export KUBECONFIG=kubeconfig
 
 # CDI setup: downloads JetPack r36.5 libs, writes CDI spec, sets up firmware
-kubectl apply -f manifests/gpu/cdi-setup.yaml
+kubectl apply -f manifests/gpu/cdi-setup-r36.yaml
 
 # Wait for libs to download (~2 min, ~50 MB from NVIDIA APT)
 kubectl rollout status daemonset/nvidia-cdi-setup -n nvidia-system --timeout=300s
@@ -235,7 +235,7 @@ NVML, which Tegra does not have, and then falls back to looking for this file. W
 PyPI fails at startup with `RuntimeError: Device string must not be empty`. The `cdi-writer` writes the
 file before the spec (`# R36 (release), REVISION: 5.0, ...`, or `R39 ... 2.1` on the r39 line).
 
-After changing `cdi-setup.yaml` or `cdi-setup-r39.yaml`, restart the DaemonSet with
+After changing `cdi-setup-r36.yaml` or `cdi-setup.yaml`, restart the DaemonSet with
 `kubectl -n nvidia-system rollout restart ds/nvidia-cdi-setup`. `kubectl apply` alone only updates the
 ConfigMap, and the running pod keeps its old scripts. GPU pods that started before the new spec was
 written keep the old injection until they are recreated.
@@ -246,7 +246,7 @@ The default driver is the JetPack r36.5 `libcuda` (CUDA 12.6). NVIDIA's CUDA for
 package `cuda-compat-orin-13-2` runs a CUDA 13.2 user-mode driver on top of the same r36.5 BSP and
 kernel modules, so CUDA 13 applications work without a new extension. To turn it on for all GPU
 containers on the node, set `CUDA_COMPAT` in the `restore-libs` init container of
-[`manifests/gpu/cdi-setup.yaml`](manifests/gpu/cdi-setup.yaml):
+[`manifests/gpu/cdi-setup-r36.yaml`](manifests/gpu/cdi-setup-r36.yaml):
 
 ```yaml
           env:
@@ -255,7 +255,7 @@ containers on the node, set `CUDA_COMPAT` in the `restore-libs` init container o
 ```
 
 ```bash
-kubectl apply -f manifests/gpu/cdi-setup.yaml
+kubectl apply -f manifests/gpu/cdi-setup-r36.yaml
 kubectl -n nvidia-system rollout restart ds/nvidia-cdi-setup
 ```
 
@@ -334,7 +334,7 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 > Talos up to v1.14.4 then reverts the upgrade to the previous image while `talosctl upgrade` still
 > reports success. Talos v1.14.5 and newer skip kexec in that case, but the reboot is run by the
 > version that is installed, so an upgrade *from* an older version still needs kexec disabled.
-> `manifests/talos/machine-patch.yaml` sets `kernel.kexec_load_disabled: "1"`. On a node installed
+> `manifests/talos/machine-patch-r36.yaml` sets `kernel.kexec_load_disabled: "1"`. On a node installed
 > before that change, apply it once (no reboot needed):
 > `talosctl patch machineconfig -n <jetson-ip> --patch '{"machine":{"sysctls":{"kernel.kexec_load_disabled":"1"}}}'`,
 > or pass `--reboot-mode powercycle` to `talosctl upgrade`. Verify every upgrade with
@@ -352,7 +352,7 @@ same release run, see [docs/jetpack7.md](docs/jetpack7.md).
 # local: JETPACK=r39 make build-extensions
 ```
 
-The r39 installer is published as `custom-installer-jp7`; r36 stays `custom-installer`. The r39 line builds the nvgpu extension and a firmware extension (`scripts/build-r39-firmware.sh`, from the `nvidia-l4t-firmware` deb), and uses `manifests/gpu/cdi-setup-r39.yaml` instead of `cdi-setup.yaml`. As on r36, the userspace libraries are downloaded on the node by the CDI setup's init container, from NVIDIA's apt repository: for r39 they are in the **`som`** component (`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`; there is no `t234` component), version and SHA-256 pinned in the manifest, about 26 MB. `scripts/check-r39-userspace.sh` (workflow "Check r39 userspace", also weekly) runs that very script and verifies the library closure.
+The r39 installer is published as `custom-installer-jp7`; r36 stays `custom-installer`. The r39 line builds the nvgpu extension and a firmware extension (`scripts/build-r39-firmware.sh`, from the `nvidia-l4t-firmware` deb), and uses `manifests/gpu/cdi-setup.yaml` instead of `cdi-setup-r36.yaml`. As on r36, the userspace libraries are downloaded on the node by the CDI setup's init container, from NVIDIA's apt repository: for r39 they are in the **`som`** component (`https://repo.download.nvidia.com/jetson/som`, dist `r39.2`; there is no `t234` component), version and SHA-256 pinned in the manifest, about 26 MB. `scripts/check-r39-userspace.sh` (workflow "Check r39 userspace", also weekly) runs that very script and verifies the library closure.
 
 Running it on a node: flash the board's QSPI to Jetson Linux r39 firmware (Seeed's `recomputer-orin-j401` package for the standard reComputer J401; use `l4t_initrd_flash.sh --qspi-only`, otherwise the tool also writes the NVMe), upgrade to the r39 installer image, apply the r39 CDI manifest. The flash is optional: on both the Orin NX and the AGX Orin the r39 image also ran on r36.5 firmware, see [Two driver lines](#two-driver-lines-r36-jetpack-6-and-r39-jetpack-72). Tested on an Orin NX 16 GB (reComputer J401) and an AGX Orin 64 GB devkit: CUDA 13 driver (`cuInit` ok), llama.cpp, Ollama and vLLM on the GPU, load tests without errors; details and the pitfalls I hit in [docs/jetpack7.md](docs/jetpack7.md).
 

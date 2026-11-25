@@ -1172,7 +1172,7 @@ size as in 5.12.0, same paths, same softdep file.
 backported to `release-1.14` as `2f7efe81b`) makes Talos skip kexec when `kexec_file_load` fails with
 `EADDRNOTAVAIL`. The reboot after an upgrade is run by the Talos version that is *running*, so an
 upgrade from v1.14.4 or older still needs the workaround below; from v1.14.5 on it does not.
-`manifests/talos/machine-patch.yaml` keeps `kernel.kexec_load_disabled: "1"` so that nodes coming
+`manifests/talos/machine-patch-r36.yaml` keeps `kernel.kexec_load_disabled: "1"` so that nodes coming
 from older versions are covered; with the fix in place it changes nothing, because kexec fails on
 this hardware anyway.
 
@@ -1217,7 +1217,7 @@ mmalyska saw the same on r39.2 firmware (`39.2.0-gcid-45755727`), including a v1
 upgrade, and confirmed both workarounds below.
 
 **Workaround** for upgrades from Talos v1.14.4 or older (pick one):
-- Disable kexec on the Jetson node. `manifests/talos/machine-patch.yaml` does this:
+- Disable kexec on the Jetson node. `manifests/talos/machine-patch-r36.yaml` does this:
   ```yaml
   machine:
     sysctls:
@@ -1271,7 +1271,7 @@ fix with driver 12060. Found while testing the optional CUDA 13.2 compat driver 
 added `pmu_pkc_prod_sig.bin`), nvgpu still loads the old GA10B firmware. Files that changed between
 the two extension versions are never picked up. On the r39 line this was observed by mmalyska in
 PR #65: with stale firmware nvgpu fails to boot the PMU and the node resets on GPU power-on. The r36
-manifest (`manifests/gpu/cdi-setup.yaml`) has the same logic.
+manifest (`manifests/gpu/cdi-setup-r36.yaml`) has the same logic.
 
 **Root cause**: `cdi-writer.sh` in `nvidia-cdi-setup` copied `/usr/lib/firmware/ga10b` (read-only
 rootfs, see Bug 1) to NVMe `/var/fw-fresh/ga10b` only if `gpmu_ucode_next_prod_image.bin` was
@@ -1281,7 +1281,7 @@ firmware version.
 
 **Fix**: sync on every start instead of copying once. Every source file that is missing or differs
 (`cmp -s`) is copied with `cp -f`, files that no longer exist in the source are removed. Ported from
-the r39 manifest in PR #65 (`manifests/gpu/cdi-setup-r39.yaml`).
+the r39 manifest in PR #65 (`manifests/gpu/cdi-setup.yaml`).
 
 **Validation (2026-11-04)**: script logic tested locally (fresh copy, unchanged rerun, changed
 file, added file, removed file). Not yet tested on the Orin NX.

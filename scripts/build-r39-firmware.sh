@@ -7,7 +7,7 @@
 # (https://repo.download.nvidia.com/jetson/som; r39 has no "t234" component, and
 # "jetson/common" only carries a few L4T packages). Version and SHA-256 are pinned below
 # (from dists/r39.2/main/binary-arm64/Packages). The userspace libraries are not part of the
-# image: manifests/gpu/cdi-setup-r39.yaml downloads them on the node, like r36 does.
+# image: manifests/gpu/cdi-setup.yaml downloads them on the node, like r36 does.
 #
 # Usage:
 #   JETPACK=r39 scripts/build-r39-firmware.sh              assemble + verify (+ image check if docker is there)

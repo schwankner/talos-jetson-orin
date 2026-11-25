@@ -17,18 +17,18 @@ on:
       jetpack:
         description: JetPack line to build (r36 = JetPack 6.x, r39 = JetPack 7.2, see docs/jetpack7.md)
         type: choice
-        options: [r36, r39]
-        default: r36
+        options: [r39, r36]
+        default: r39
   workflow_call:   # allow release.yaml to call this as a reusable workflow
     inputs:
       jetpack:
         type: string
-        default: r36
+        default: r39
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # picked up by scripts/common.sh (nvgpu package directory, versions, image tags)
-  JETPACK: ${{ inputs.jetpack || 'r36' }}
+  JETPACK: ${{ inputs.jetpack || 'r39' }}
 
 jobs:
   build-extensions:
@@ -153,7 +153,7 @@ jobs:
         # JetPack r39 only. The GA10B firmware comes from the nvidia-l4t-firmware deb in NVIDIA's
         # apt repository (component "som" of r39.2), packaged by scripts/build-r39-firmware.sh
         # into nvidia-firmware-ext:<r39 tag>. The userspace libraries are downloaded on the node
-        # by manifests/gpu/cdi-setup-r39.yaml. Independent of the kernel build; skipped when the
+        # by manifests/gpu/cdi-setup.yaml. Independent of the kernel build; skipped when the
         # tag is already in ghcr.io.
         if: env.JETPACK == 'r39'
         env:
