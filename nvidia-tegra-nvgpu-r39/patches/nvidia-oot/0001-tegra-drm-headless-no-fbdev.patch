@@ -2,8 +2,8 @@ tegra-drm: build headless, without fbdev emulation
 
 The kernel config has CONFIG_DRM_FBDEV_EMULATION=y, which the module
 inherits through autoconf.h and cannot undefine via ccflags. fbdev.c
-relies on drm_fb_helper internals that changed heavily between 6.0 and
-6.18 and is not needed for a render node, so always take the stub path.
+relies on drm_fb_helper internals that changed heavily since 6.0 and
+is not needed for a render node, so always take the stub path.
 
 diff --git a/drivers/gpu/drm/tegra/drm.h b/drivers/gpu/drm/tegra/drm.h
 index 147ce75..1224e96 100644

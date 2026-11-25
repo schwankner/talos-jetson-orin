@@ -3,8 +3,6 @@ nvgpu: use a GPIO descriptor for the thermal interrupt
 of_get_named_gpio() and the legacy gpio_to_irq() path are gone in
 Linux 7.3. Use a managed GPIO descriptor for the thermal interrupt and
 release the device-tree reference on both success and failure.
-(r39 has no gm20b clock-provider ops, so the round_rate half of the
-r36.5 patch is not needed.)
 
 diff --git a/drivers/gpu/nvgpu/os/linux/module.c b/drivers/gpu/nvgpu/os/linux/module.c
 index 16b8732..67eba8c 100644

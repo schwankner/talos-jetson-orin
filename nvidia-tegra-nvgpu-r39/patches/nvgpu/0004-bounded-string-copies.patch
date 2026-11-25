@@ -1,7 +1,7 @@
 nvgpu: replace the remaining kernel strncpy calls
 
-Linux 7.3 no longer provides strncpy. r39 already replaced most call
-sites; this covers the three left in the Linux build. Bounded-copy and
+Linux 7.3 no longer provides strncpy. The jetson_39.2.1 sources already
+replaced most call sites; this covers the three left in the Linux build. Bounded-copy and
 zero-padding semantics are preserved: the nvsched domain and the vGPU
 ECC stats are zeroed first, the PMU trace copy has a known length.
 
