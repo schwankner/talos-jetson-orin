@@ -109,7 +109,7 @@ jobs:
             --cache-to   "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_NVGPU},mode=min" \
             --output "type=local,dest=${OUT}" \
             .
-        timeout-minutes: 120
+        timeout-minutes: 300  # TEST: cold 7.3.6 kernel build
 
       - name: Verify build output
         run: |
@@ -126,6 +126,8 @@ jobs:
             "tegra-drm.ko"
             "nvmap.ko"
             "mc-utils.ko"
+            "ivc_ext.ko"
+            "tegra_hv.ko"
           )
           FAIL=0
           for mod in "${REQUIRED[@]}"; do
