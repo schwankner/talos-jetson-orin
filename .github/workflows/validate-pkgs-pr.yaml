@@ -139,6 +139,16 @@ jobs:
             fi
           done
 
+          # GA10B firmware (where nvgpu looks first)
+          for fw in gpmu_ucode_next_prod_image.bin pmu_pkc_prod_sig.bin fecs_encrypt_prod.bin gpccs_encrypt_prod.bin acr-gsp.text.encrypt.bin.prod; do
+            if find "${OUT}" -path "*/usr/lib/firmware/nvidia/ga10b/${fw}" -size +0 | grep -q .; then
+              echo "  ✓ firmware nvidia/ga10b/${fw}"
+            else
+              echo "  ✗ firmware nvidia/ga10b/${fw} MISSING"
+              FAIL=1
+            fi
+          done
+
           # The shim must NOT be built any more.
           if find "${OUT}" -name "nvhost_ctrl_shim.ko" | grep -q .; then
             echo "  ✗ nvhost_ctrl_shim.ko was built but should be gone"
