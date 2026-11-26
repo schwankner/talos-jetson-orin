@@ -156,7 +156,6 @@ jobs:
               - console=ttyTCU0,115200
               # Local console on the active framebuffer/DRM device (HDMI or DP).
               - console=tty0
-              - firmware_class.path=/usr/lib/firmware
           output:
             kind: installer
             outFormat: raw
@@ -206,9 +205,7 @@ jobs:
           # that follows custom-installer-jp7:<talos> cannot be moved to the r36 image.
           # The alias is mutable: it names the latest build of that Talos version.
           ALIAS_TAG="ghcr.io/${{ github.repository_owner }}/${INSTALLER_REPO}:${TALOS_VERSION}"
-          docker tag "${INSTALLER_TAG}" "${ALIAS_TAG}"
-          docker push "${ALIAS_TAG}"
-          echo "✓ Pushed alias: ${ALIAS_TAG} -> ${INSTALLER_TAG}"
+          echo "TEST branch: alias ${ALIAS_TAG} not moved"
         env:
           REGISTRY: ghcr.io/${{ github.repository_owner }}
           REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}
