@@ -86,8 +86,8 @@ machine:
         # systemd-boot + UKI. Setting grubUseUKICmdline: true causes the installer to
         # skip creating the UKI boot entry in the EFI partition, leaving systemd-boot
         # with no entries (only "Reboot Into Firmware Interface" visible → boot loop).
-        # The firmware_class.path=/usr/lib/firmware cmdline is already embedded in the
-        # UKI inside the custom-installer image by the imager profile — do NOT set this.
+        # The kernel command line is embedded in the UKI inside the custom-installer image by
+        # the imager profile — do NOT set it here.
         # NOTE: Extensions are NOT listed here — they are baked into the custom-installer
         # image and loaded from there. Listing them here triggered the deprecated
         # install.extensions validation warning in Talos v1.12. The extensions are already

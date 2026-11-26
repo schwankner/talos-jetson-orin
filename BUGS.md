@@ -8,6 +8,10 @@ the order they were hit.
 
 ## Bug 1 — Firmware ELOOP (−40)
 
+**Status (2026-11-26)**: not needed on the r39 line any more. With the firmware in
+`/usr/lib/firmware/nvidia/ga10b` and no `firmware_class.path` on the kernel command line, the GA10B firmware
+loads on Talos 1.14.7 (Orin NX and AGX Orin). The r36 line keeps the kernel argument.
+
 **Symptom**: `dmesg` shows nvgpu attempting to load firmware files and
 failing with error code `-40` (`ELOOP`) even though the files physically
 exist in the filesystem.
@@ -1266,6 +1270,9 @@ fix with driver 12060. Found while testing the optional CUDA 13.2 compat driver 
 ---
 
 ## Bug 27 — Stale GPU Firmware in `/var/fw-fresh` After a Firmware Extension Update
+
+**Status (2026-11-26)**: the r39 line no longer copies the firmware to `/var/fw-fresh` (see Bug 1); its CDI setup
+deletes an old copy. The fix below still applies to the r36 line.
 
 **Symptom**: after a node upgrade with a newer `nvidia-firmware-ext` (e.g. tag `v4` → `v5`, which
 added `pmu_pkc_prod_sig.bin`), nvgpu still loads the old GA10B firmware. Files that changed between

@@ -13,12 +13,10 @@
 #      the /dev/nvhost-* and /dev/host1x-* nodes that exist; every char device found is injected.
 #      The r36 /dev/nvhost-ctrl compatibility symlink is gone.
 #
-#   3. Firmware: the nvidia-firmware-ext extension puts the GA10B files in
-#      /usr/lib/firmware/ga10b; they are synced to NVMe /var/fw-fresh and firmware_class.path is
-#      redirected there to avoid -ETXTBSY on squashfs inodes. The sync runs on every start and
-#      replaces files that differ: /var survives node upgrades, and a copy made once kept the
-#      older firmware in front of the new one (the r39 nvgpu then fails to boot the PMU and
-#      resets the node on GPU power-on).
+#   3. Firmware: nothing to do. The nvidia-firmware-ext extension puts the GA10B files in
+#      /usr/lib/firmware/nvidia/ga10b, where the kernel finds them on its default search path.
+#      On nodes that ran an older version of this manifest, the old firmware copy in
+#      /var/fw-fresh is removed (it would shadow the firmware of the node image).
 #
 #   4. Writes /var/run/cdi/nvidia-jetson.yaml (spec generated dynamically from the device nodes
 #      that actually exist) and keeps it alive across tmpfs resets.
@@ -133,8 +131,6 @@ data:
 
     CDI_DIR=/var/run/cdi
     CDI_SPEC="${CDI_DIR}/nvidia-jetson.yaml"
-    FW_SRC=/host-firmware/ga10b
-    FW_DEST=/host-var/fw-fresh/ga10b
 
     write_cdi_spec() {
       mkdir -p "${CDI_DIR}"
@@ -208,28 +204,14 @@ data:
       echo "[cdi-setup] CDI spec written: ${CDI_SPEC} (${DEV_COUNT} device nodes)"
     }
 
-    # ── Firmware sync (idempotent) ─────────────────────────────────────────
-    # /var survives node upgrades and firmware_class.path below points at it, so a copy made
-    # once would shadow newer firmware from the node image. Copy every file that is missing
-    # or differs, drop the extras.
-    if [ -d "${FW_SRC}" ]; then
-      mkdir -p "${FW_DEST}"
-      for f in "${FW_SRC}"/*; do
-        b=$(basename "${f}")
-        if ! cmp -s "${f}" "${FW_DEST}/${b}"; then
-          echo "[cdi-setup] firmware: updating ${b}"
-          cp -f "${f}" "${FW_DEST}/${b}"
-        fi
-      done
-      for f in "${FW_DEST}"/*; do
-        [ -e "${f}" ] || continue
-        [ -e "${FW_SRC}/$(basename "${f}")" ] || { echo "[cdi-setup] firmware: removing stale $(basename "${f}")"; rm -f "${f}"; }
-      done
-    else
-      echo "[cdi-setup] WARNING: ${FW_SRC} not found, firmware not synced"
+    # ── Firmware: remove the copy older versions of this manifest made ─────
+    # Older versions copied the firmware to /var/fw-fresh and pointed firmware_class.path at it.
+    # Without the copy the kernel falls back to its default search path, even while the old
+    # setting is still active (until the next reboot).
+    if [ -d /host-var/fw-fresh ]; then
+      rm -rf /host-var/fw-fresh
+      echo "[cdi-setup] removed the old firmware copy in /var/fw-fresh"
     fi
-    echo "[cdi-setup] Redirecting firmware_class.path -> /var/fw-fresh"
-    echo -n '/var/fw-fresh' > /sys/module/firmware_class/parameters/path
 
     # ── Device permissions ────────────────────────────────────────────────
     for dev in \
@@ -314,9 +296,6 @@ spec:
               mountPath: /dev
             - name: sys
               mountPath: /sys
-            - name: host-firmware
-              mountPath: /host-firmware
-              readOnly: true
             - name: host-var
               mountPath: /host-var
             - name: cdi-dir
@@ -335,9 +314,6 @@ spec:
         - name: sys
           hostPath:
             path: /sys
-        - name: host-firmware
-          hostPath:
-            path: /usr/lib/firmware
         - name: host-var
           hostPath:
             path: /var

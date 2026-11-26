@@ -68,8 +68,8 @@ case "${JETPACK}" in
   r39)
     NVGPU_PKG="nvidia-tegra-nvgpu-r39"
     INSTALLER_REPO="custom-installer-jp7"
-    : "${NVGPU_VERSION:=39.2.1-jp7-headless}"
-    : "${FIRMWARE_EXT_TAG:=r39-v1}"   # scripts/build-r39-firmware.sh; the userspace libraries are
+    : "${NVGPU_VERSION:=39.2.1-jp7-2}"
+    : "${FIRMWARE_EXT_TAG:=r39-v2}"   # scripts/build-r39-firmware.sh; the userspace libraries are
                                       # downloaded on the node by manifests/gpu/cdi-setup.yaml
     ;;
   *) echo "[ERROR] JETPACK must be r36 or r39, got '${JETPACK}'" >&2; exit 1 ;;

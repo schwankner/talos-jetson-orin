@@ -98,6 +98,11 @@ else
   FORCE_INSECURE=true
 fi
 
+# r36 only: firmware_class.path=/usr/lib/firmware (the r36 CDI setup still redirects the path to
+# /var/fw-fresh). The r39 line loads its firmware from /usr/lib/firmware/nvidia/ga10b on the
+# default search path.
+FW_KARG=""
+[[ "${JETPACK}" == "r36" ]] && FW_KARG="    - firmware_class.path=/usr/lib/firmware"
 PROFILE=$(cat <<EOF
 arch: arm64
 platform: metal
@@ -128,7 +133,7 @@ customization:
     - console=ttyTCU0,115200
     # Local console on the active framebuffer/DRM device (HDMI or DP).
     - console=tty0
-    - firmware_class.path=/usr/lib/firmware
+${FW_KARG}
 output:
   kind: uki
   outFormat: raw
