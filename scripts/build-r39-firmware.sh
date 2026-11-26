@@ -47,13 +47,14 @@ FW_SRC="${X}/lib/firmware/nvidia/ga10b"
 [[ -d "${FW_SRC}" ]] || error "ga10b firmware directory not found in nvidia-l4t-firmware"
 FW_OUT="${OUT}/firmware/rootfs/usr/lib/firmware"
 mkdir -p "${FW_OUT}"
-# same layout as the r36 extension: /usr/lib/firmware/ga10b (nvgpu asks for nvidia/ga10b/<file>,
-# then ga10b/<file>; firmware_class.path=/usr/lib/firmware is on the kernel command line)
-cp -a "${FW_SRC}" "${FW_OUT}/ga10b"
+# NVIDIA's own layout: /usr/lib/firmware/nvidia/ga10b. nvgpu asks for nvidia/ga10b/<file> first,
+# and the kernel finds it on its default search path (no firmware_class.path needed).
+mkdir -p "${FW_OUT}/nvidia"
+cp -a "${FW_SRC}" "${FW_OUT}/nvidia/ga10b"
 for must in gpmu_ucode_next_prod_image.bin pmu_pkc_prod_sig.bin fecs_encrypt_prod.bin gpccs_encrypt_prod.bin; do
-  [[ -s "${FW_OUT}/ga10b/${must}" ]] || error "firmware file missing or empty: ${must}"
+  [[ -s "${FW_OUT}/nvidia/ga10b/${must}" ]] || error "firmware file missing or empty: ${must}"
 done
-info "firmware: $(find "${FW_OUT}/ga10b" -type f | wc -l) files, $(du -sh "${FW_OUT}/ga10b" | cut -f1)"
+info "firmware: $(find "${FW_OUT}/nvidia/ga10b" -type f | wc -l) files, $(du -sh "${FW_OUT}/nvidia/ga10b" | cut -f1)"
 
 # ── 3. extension manifest and build context ──────────────────────────────────
 # The Talos imager parses manifest.yaml strictly; an unquoted ": " in a description once broke an

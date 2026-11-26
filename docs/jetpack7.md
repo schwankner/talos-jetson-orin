@@ -105,11 +105,15 @@ download, 32 MB kept). Three things that are easy to miss:
   an Orin NX 16 GB (Talos v1.14.2): stock Ollama v0.40.2 (`cuda_v13`) with `qwen2.5:0.5b` and `qwen3:4b` runs
   100% on the GPU at 89 and 17.6 tok/s decode (`llama-bench` on the same files: 89.7 and 16.7 tok/s). llama.cpp
   builds with native sm_87 code do not need the library.
-- The GA10B firmware must match the driver. The CDI setup copies the firmware to `/var/fw-fresh` and points
-  `firmware_class.path` there; `/var` survives node upgrades, so a copy made once keeps older firmware in front
-  of the new one. With the r36 PMU firmware the r39 `nvgpu` does not boot the PMU (`pwr_falcon_exterrstat
-  0xbadf....`) and then dereferences NULL in its stall interrupt thread, which hard-resets the node on GPU
-  power-on, with no panic record. The r39 manifest syncs the files on every start.
+- The GA10B firmware must match the driver. With the r36 PMU firmware the r39 `nvgpu` does not boot the PMU
+  (`pwr_falcon_exterrstat 0xbadf....`) and then dereferences NULL in its stall interrupt thread, which
+  hard-resets the node on GPU power-on, with no panic record.
+- The firmware extension puts the files in `/usr/lib/firmware/nvidia/ga10b`, NVIDIA's own layout; `nvgpu`
+  requests `nvidia/ga10b/<file>` first. The kernel finds them on its default search path: since `39.2.1-jp7-2`
+  (firmware extension `r39-v2`) the r39 line has no `firmware_class.path` on the kernel command line and the
+  CDI setup no longer copies the firmware to `/var/fw-fresh` (tested on the Orin NX and the AGX Orin, Talos
+  1.14.7, 2026-11-26). Older r39 images kept the copy and the redirect, which is how stale firmware could end up
+  in front of the new one; the current r39 manifest deletes an old `/var/fw-fresh`.
 - **GPU clock after boot.** The r39 `nvgpu` creates its devfreq node only at the first GPU use, and its default
   maximum is 1173 MHz (the Super clock). `manifests/gpu/power-mode.yaml` looks for the node every second and applies
   the power-mode cap (918 MHz in MAXN) as soon as it appears, so the GPU does not run above it. The cap used to come
@@ -164,8 +168,8 @@ two runs each:
   lower because EMC and the CPU governor were not set, not because of the firmware.
 - `tegra_se` fails to load with `Unknown symbol host1x_*` on both image lines, because the out-of-tree `host1x`
   replaces the in-tree one. It is not needed for the GPU.
-- The CDI setup DaemonSet syncs the GPU firmware into `/var/fw-fresh` on every start. When a node changes image
-  lines, it replaces the other line's files there (`firmware: updating fecs_encrypt_prod.bin` and so on).
+- The r36 CDI setup syncs the GPU firmware into `/var/fw-fresh` on every start and points `firmware_class.path`
+  there. The r39 setup deletes that copy, so after a switch to r39 the kernel uses the firmware of the image.
 
 Switching lines on a running node: scale GPU workloads to 0, delete the `nvidia-cdi-setup` DaemonSet, stage the
 machine config with the other line's module list and installer (`talosctl apply-config --mode=staged -f <full
@@ -253,10 +257,9 @@ matches the one in pkgs.
   tag. Use a new tag or `--image repo@sha256:<digest>`.
 - **Moving a node from r36 to r39: take the r36 CDI setup away first.** Before the node boots the r39 driver for the
   first time, delete the r36 `nvidia-cdi-setup` DaemonSet and scale the GPU workloads to 0. Otherwise the r36
-  DaemonSet points `firmware_class.path` at the stale r36 GA10B firmware in `/var/fw-fresh`, which is the
-  hard-reset case described under "Userspace and firmware". After the upgrade apply
-  `manifests/gpu/cdi-setup.yaml`: it replaces the firmware files in `/var/fw-fresh` and installs the r39
-  userspace libraries, then start the workloads again.
+  DaemonSet points `firmware_class.path` at the r36 GA10B firmware in `/var/fw-fresh`, which is the hard-reset
+  case described under "Userspace and firmware". After the upgrade apply `manifests/gpu/cdi-setup.yaml`: it
+  deletes `/var/fw-fresh` and installs the r39 userspace libraries, then start the workloads again.
 - **One JetPack line per cluster.** `cdi-setup.yaml` uses the same names as `cdi-setup-r36.yaml` (namespace
   `nvidia-system`, ConfigMap `nvidia-cdi-setup-scripts`, DaemonSet `nvidia-cdi-setup`, host directory
   `/var/lib/nvidia-tegra-libs`), so applying one replaces the other. A cluster runs one line at a time, and the CDI

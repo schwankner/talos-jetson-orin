@@ -221,8 +221,9 @@ without its display code: the Orin display is driven by nvdisplay, not by tegra-
 The `nvidia-cdi-setup` DaemonSet:
 1. Downloads real JetPack userspace libs from NVIDIA's public APT (r39.2.1 from the `som` component,
    about 26 MB; r36.5 on the r36 line)
-2. Syncs GPU firmware to NVMe (avoids `-ETXTBSY` on squashfs inodes); runs on every start, so an
-   updated firmware extension replaces the old copies in `/var/fw-fresh` (BUGS.md, Bug 27)
+2. r36 line only: syncs the GPU firmware to NVMe `/var/fw-fresh` and points `firmware_class.path` there
+   (BUGS.md, Bugs 1 and 27). The r39 line needs neither: its firmware sits in `/usr/lib/firmware/nvidia/ga10b`,
+   where the kernel finds it on its default search path; the r39 manifest only removes an old `/var/fw-fresh`
 3. Writes `/var/run/cdi/nvidia-jetson.yaml` — the CDI spec containerd reads per pod
 
 The `nvidia-device-plugin` exposes `nvidia.com/gpu: 1` as a Kubernetes extended resource.
