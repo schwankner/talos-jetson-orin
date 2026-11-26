@@ -1,51 +1,34 @@
-name: Validate pkgs PR build
+name: Test pkgs package + extension (TEST, do not merge)
 
-# Builds the nvidia-tegra-nvgpu package straight out of the siderolabs/pkgs fork
-# branch that feeds PR #1518, so the upstream PR can be validated before pushing
-# to it. The siderolabs CI needs their own runner group ("pkgs"), which a fork
-# cannot use, hence this harness on the free ubuntu-24.04-arm runner.
-#
-# What this validates:
-#   - OE4T sources resolve (URLs + pinned commits/checksums in the fork's Pkgfile)
-#   - all Clang/kernel-6.18 patches apply
-#   - host1x + host1x-fence + host1x-nvhost + nvhwpm + tegra-drm + nvmap
-#     + mc-utils + governor + nvgpu all build
-#   - the expected .ko files land in the output, including tegra-drm at the
-#     kernel/drivers/gpu/drm/tegra shadow path
-#
-# Runtime: ~90 min cold, ~20 min with a warm kernel cache.
-# Trigger: workflow_dispatch only.
+# Builds nvidia-tegra-nvgpu-pkg from the pkgs fork branch exactly as siderolabs/pkgs would
+# (kernel signing key unchanged), pushes it to ghcr, then builds the nvidia-tegra-nvgpu
+# extension from the extensions fork branch against it, which runs the extensions-validator.
 
 on:
   workflow_dispatch:
     inputs:
       fork_repo:
-        description: pkgs fork to build from
         default: schwankner/pkgs
         required: true
       fork_ref:
-        description: branch in that fork
-        default: feat/drm-noshim-validate
+        default: feat/nvidia-tegra-nvgpu-r39-firmware
+        required: true
+      extensions_ref:
+        default: feat/nvidia-tegra-nvgpu-r39
         required: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  validate:
-    name: Build nvidia-tegra-nvgpu from pkgs fork
+  build:
     runs-on: ubuntu-26.04-arm
-
+    timeout-minutes: 340
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout (for scripts/common.sh)
-        uses: actions/checkout@v7
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -56,142 +39,48 @@ jobs:
           docker buildx create --name talos-builder --driver docker-container --use
           docker buildx inspect talos-builder --bootstrap
 
-      - name: Clone pkgs fork branch
+      - name: Build and push nvidia-tegra-nvgpu-pkg from the pkgs fork
+        id: pkg
         run: |
-          git clone --filter=blob:none --single-branch \
-            --branch "${{ inputs.fork_ref }}" \
-            "https://github.com/${{ inputs.fork_repo }}" /tmp/talos-pkgs
-          echo "✓ ${{ inputs.fork_repo }}@${{ inputs.fork_ref }} at $(git -C /tmp/talos-pkgs rev-parse --short HEAD)"
-          echo "Package contents:"
-          ls -la /tmp/talos-pkgs/nvidia-tegra-nvgpu/
+          git clone --filter=blob:none --single-branch --branch "${{ inputs.fork_ref }}" "https://github.com/${{ inputs.fork_repo }}" /tmp/pkgs
+          cd /tmp/pkgs
+          TAG="test-$(git rev-parse --short HEAD)"
+          IMG="ghcr.io/${{ github.repository_owner }}/nvidia-tegra-nvgpu-pkg:${TAG}"
+          CACHE="ghcr.io/${{ github.repository_owner }}/build-cache:pkgs-fork-nvgpu-$(awk '/^ +linux_version:/{print $2; exit}' Pkgfile)"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          docker buildx build --builder talos-builder --file Pkgfile --target nvidia-tegra-nvgpu-pkg \
+            --platform linux/arm64 --progress=plain \
+            --cache-from "type=registry,ref=${CACHE}" --cache-to "type=registry,ref=${CACHE},mode=max" \
+            --output "type=image,name=${IMG},push=true" .
+          docker buildx build --builder talos-builder --file Pkgfile --target nvidia-tegra-nvgpu-pkg \
+            --platform linux/arm64 --progress=plain --cache-from "type=registry,ref=${CACHE}" \
+            --output "type=local,dest=/tmp/pkg-out" .
+        timeout-minutes: 300
 
-      - name: Assert the shim is gone
+      - name: Check the package contents
         run: |
-          cd /tmp/talos-pkgs
-          if [ -f nvidia-tegra-nvgpu/nvhost_ctrl_shim.c ]; then
-            echo "✗ nvhost_ctrl_shim.c still present — this branch is not the no-shim variant"
-            exit 1
-          fi
-          if grep -rqi "nvhost_ctrl_shim\|nvhost-ctrl-shim" nvidia-tegra-nvgpu/; then
-            echo "✗ shim references remain:"
-            grep -rni "nvhost_ctrl_shim\|nvhost-ctrl-shim" nvidia-tegra-nvgpu/
-            exit 1
-          fi
-          echo "✓ no shim references"
-
-      - name: Build nvidia-tegra-nvgpu
-        run: |
-          source scripts/common.sh
-          cd /tmp/talos-pkgs
-
-          OUT=/tmp/nvgpu-pkgs-validate
-          mkdir -p "${OUT}"
-
-          CACHE_REGISTRY="ghcr.io/${{ github.repository_owner }}/build-cache"
-          CACHE_TAG_KERNEL="kernel-${TALOS_VERSION}-k${KERNEL_VERSION}"
-          CACHE_TAG_NVGPU="nvgpu-pkgs-validate-k${KERNEL_VERSION}"
-
-          # bldr addresses targets by the `name:` in pkg.yaml, which in the pkgs
-          # tree carries a -pkg suffix. Read it instead of hardcoding it.
-          TARGET=$(awk '/^name:/{print $2; exit}' nvidia-tegra-nvgpu/pkg.yaml)
-          [ -n "${TARGET}" ] || { echo "could not read package name from pkg.yaml"; exit 1; }
-
-          echo "=== Building ${TARGET} (pkgs fork, DRM no-shim) ==="
-          echo "    Talos ${TALOS_VERSION}, kernel ${KERNEL_VERSION}"
-
-          docker buildx build \
-            --builder talos-builder \
-            --file Pkgfile \
-            --target "${TARGET}" \
-            --platform linux/arm64 \
-            --cache-from "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_NVGPU}" \
-            --cache-from "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_KERNEL}" \
-            --cache-to   "type=registry,ref=${CACHE_REGISTRY}:${CACHE_TAG_NVGPU},mode=min" \
-            --output "type=local,dest=${OUT}" \
-            .
-        timeout-minutes: 300  # TEST: cold 7.3.6 kernel build
-
-      - name: Verify build output
-        run: |
-          OUT=/tmp/nvgpu-pkgs-validate
-          echo "=== Modules produced ==="
-          find "${OUT}" -name "*.ko" | sort
-
-          REQUIRED=(
-            "nvgpu.ko"
-            "host1x.ko"
-            "host1x-fence.ko"
-            "host1x-nvhost.ko"
-            "nvhwpm.ko"
-            "tegra-drm.ko"
-            "nvmap.ko"
-            "mc-utils.ko"
-            "ivc_ext.ko"
-            "tegra_hv.ko"
-          )
-          FAIL=0
-          for mod in "${REQUIRED[@]}"; do
-            if find "${OUT}" -name "${mod}" | grep -q .; then
-              echo "  ✓ ${mod}"
-            else
-              echo "  ✗ ${mod} MISSING"
-              FAIL=1
-            fi
+          cd /tmp/pkg-out
+          find . -type f | sort | sed 's/^/  /'
+          for m in nvgpu host1x host1x-fence host1x-nvhost nvhwpm tegra-drm nvmap mc-utils ivc_ext tegra_hv governor_pod_scaling; do
+            find . -name "${m}.ko" | grep -q . || { echo "✗ ${m}.ko missing"; exit 1; }
           done
-
-          # GA10B firmware (where nvgpu looks first)
           for fw in gpmu_ucode_next_prod_image.bin pmu_pkc_prod_sig.bin fecs_encrypt_prod.bin gpccs_encrypt_prod.bin acr-gsp.text.encrypt.bin.prod; do
-            if find "${OUT}" -path "*/usr/lib/firmware/nvidia/ga10b/${fw}" -size +0 | grep -q .; then
-              echo "  ✓ firmware nvidia/ga10b/${fw}"
-            else
-              echo "  ✗ firmware nvidia/ga10b/${fw} MISSING"
-              FAIL=1
-            fi
+            test -s "usr/lib/firmware/nvidia/ga10b/${fw}" || { echo "✗ firmware ${fw} missing"; exit 1; }
           done
+          test -f usr/lib/modprobe.d/nvidia-tegra.conf
+          echo "✓ package contents"
 
-          # The shim must NOT be built any more.
-          if find "${OUT}" -name "nvhost_ctrl_shim.ko" | grep -q .; then
-            echo "  ✗ nvhost_ctrl_shim.ko was built but should be gone"
-            FAIL=1
-          else
-            echo "  ✓ no nvhost_ctrl_shim.ko"
-          fi
-
-          # host1x must shadow the in-tree module.
-          if find "${OUT}" -path "*/kernel/drivers/gpu/host1x/host1x.ko" | grep -q .; then
-            echo "  ✓ host1x.ko at kernel/drivers/gpu/host1x/ (shadow path)"
-          else
-            echo "  ✗ host1x.ko not at its shadow path"
-            FAIL=1
-          fi
-
-          # tegra-drm must shadow the in-tree module, otherwise depmod points
-          # modprobe at the vanilla tegra-drm.ko and the ABI mismatch returns.
-          if find "${OUT}" -path "*/kernel/drivers/gpu/drm/tegra/tegra-drm.ko" | grep -q .; then
-            echo "  ✓ tegra-drm.ko at kernel/drivers/gpu/drm/tegra/ (shadow path)"
-          else
-            echo "  ✗ tegra-drm.ko not at its shadow path"
-            FAIL=1
-          fi
-
-          # Load order must name the DRM chain, not the shim.
-          # The package finalizes /rootfs to /, so locate the file rather than
-          # assuming either layout.
-          CONF=$(find "${OUT}" -path "*/modprobe.d/nvidia-tegra.conf" | head -1)
-          if [ -n "${CONF}" ] && [ -f "${CONF}" ]; then
-            echo "  ✓ modprobe.d/nvidia-tegra.conf"
-            cat "${CONF}"
-            grep -q "softdep tegra-drm pre:" "${CONF}" || { echo "  ✗ tegra-drm softdep missing"; FAIL=1; }
-          else
-            echo "  ✗ modprobe.d/nvidia-tegra.conf MISSING"
-            FAIL=1
-          fi
-
-          if [ "${FAIL}" -eq 0 ]; then
-            echo ""
-            echo "✓ DRM no-shim package builds cleanly — safe to push to PR #1518"
-          else
-            echo ""
-            echo "✗ validation failed — do not push to the PR yet"
-            exit 1
-          fi
+      - name: Build the nvidia-tegra-nvgpu extension from the extensions fork
+        run: |
+          git clone --filter=blob:none --single-branch --branch "${{ inputs.extensions_ref }}" https://github.com/schwankner/extensions /tmp/ext
+          cd /tmp/ext
+          make local-nvidia-tegra-nvgpu PLATFORM=linux/arm64 PROGRESS=plain \
+            PKGS_PREFIX=ghcr.io/${{ github.repository_owner }} PKGS=${{ steps.pkg.outputs.tag }} \
+            DEST=/tmp/ext-out
+          cd /tmp/ext-out
+          cat manifest.yaml
+          find rootfs -type f | sort | sed 's/^/  /' | head -80
+          test -s rootfs/usr/lib/firmware/nvidia/ga10b/pmu_pkc_prod_sig.bin
+          test -f rootfs/usr/local/lib/modprobe.d/nvidia-tegra.conf
+          find rootfs -name nvgpu.ko | grep -q .
+          echo "✓ extension built and validated"
