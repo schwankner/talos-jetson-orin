@@ -211,9 +211,15 @@ jobs:
           # that follows custom-installer-jp7:<talos> cannot be moved to the r36 image.
           # The alias is mutable: it names the latest build of that Talos version.
           ALIAS_TAG="ghcr.io/${{ github.repository_owner }}/${INSTALLER_REPO}:${TALOS_VERSION}"
-          docker tag "${INSTALLER_TAG}" "${ALIAS_TAG}"
-          docker push "${ALIAS_TAG}"
-          echo "✓ Pushed alias: ${ALIAS_TAG} -> ${INSTALLER_TAG}"
+          # Only builds of a tag or of main move the alias; a test build from a branch must not
+          # change what nodes that follow the alias get.
+          if [[ "${GITHUB_REF}" == refs/tags/* || "${GITHUB_REF}" == refs/heads/main ]]; then
+            docker tag "${INSTALLER_TAG}" "${ALIAS_TAG}"
+            docker push "${ALIAS_TAG}"
+            echo "✓ Pushed alias: ${ALIAS_TAG} -> ${INSTALLER_TAG}"
+          else
+            echo "Branch build (${GITHUB_REF}): alias ${ALIAS_TAG} not moved"
+          fi
         env:
           REGISTRY: ghcr.io/${{ github.repository_owner }}
           REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}
