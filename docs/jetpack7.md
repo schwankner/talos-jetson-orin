@@ -197,6 +197,51 @@ Flashing the J401 back to r36.5 (Seeed `Linux_for_Tegra` branch `r36.5.0` on top
 - After the flash I did a cold boot (recovery jumper and USB cable removed, power off and on). The board booted
   the NVMe directly.
 
+## Linux 7.3 (Talos 1.15)
+
+The r39 package was built on Linux 7.3.1 (Talos v1.15.0-beta.0) and 7.3.6 (siderolabs/pkgs main, 2026-11-25) and
+tested on hardware with 7.3.1. The 7.3 ports and the test setup are on branch `test/pkgs-r39-linux736` (7.3.6) and
+`test/pkgs-r39-linux731` (the same code on 7.3.1); `main` still builds for Talos 1.14 / 6.18.
+
+**Kernel fix needed.** Since 8b8ee2e56f95 (Linux 7.2) Orin is reported as pre-silicon and the GPU runs about 7x
+slower (`BUGS.md`, Bug 28). `kernel-patches/0001-soc-tegra-fuse-platform-from-hidrev-on-tf-a-socs.patch` fixes it;
+siderolabs/pkgs carries it as `kernel/build/patches/0020-soc-tegra-fuse-read-the-platform-from-HIDREV-on-TF-A.patch`.
+
+**Source ports** (patches against `jetson_39.2.1`):
+
+| Tree | Patch | Why |
+|---|---|---|
+| nvgpu | `0001-pci-power-gpio-descriptors` | the integer OF GPIO interface is gone |
+| nvgpu | `0002-pmu-trace-prefix-copy` | `strncpy` is gone |
+| nvgpu | `0003-dmabuf-special-vma-zap` | `zap_vma_ptes` was replaced by `zap_special_vma_range` |
+| nvgpu | `0004-bounded-string-copies` | the last three `strncpy` calls (nvsched domain, vGPU ECC stats, PMU trace) |
+| nvgpu | `0005-thermal-gpio-descriptor` | `of_get_named_gpio()` / `gpio_to_irq()` are gone |
+| nvidia-oot | `0003-host1x-fence-lock-accessor` | `struct dma_fence` has no `lock` member; use `dma_fence_spinlock()` |
+| nvidia-oot | `0004-tegra-drm-atomic-commit` | `struct drm_atomic_state` is `struct drm_atomic_commit` |
+| nvidia-oot | `0005-tegra-drm-drm-timeout-header` | 7.3.6 only: `drm_timeout_abs_to_jiffies()` moved to `drm/drm_timeout.h` (backport of ae72b9c39d28); 7.3.1 does not have the header |
+
+Besides the patches: tegra-drm is built headless, without its display code (now also on 6.18, see above), and
+conftest gets `EXTRA_CFLAGS=-fms-anonymous-structs` to match Kbuild's flags for the kernel headers.
+
+**Results on 7.3.1** (with the kernel fix, r36.5 QSPI firmware on both boards): `soc0/revision` reads
+`Silicon A01`, all 12 modules load, `/dev/dri/renderD128` is present, CUDA 13.2 works. Ollama, the same as on
+6.18 and unchanged after a reboot:
+
+| Board | qwen2.5:0.5b | qwen3:4b | qwen3.6:35b | gemma4:31b |
+|---|---|---|---|---|
+| AGX Orin 64 GB (1300.5 MHz) | 144.5 | 37.7 | 25.2 | 7.2 |
+| Orin NX 16 GB (918 MHz) | 66.0 | 16.6 | | |
+
+The only new kernel message is a one-time `workqueue: host1x_cdma is using neither WQ_PERCPU or WQ_UNBOUND`
+warning from host1x; it only makes the old default explicit.
+
+**No 7.3.6 image yet.** The Talos imager copies the kernel modules from the directory named after the kernel version
+built into Talos (`constants.DefaultKernelVersion`: 7.3.1 in v1.15.0-beta.0, 7.3.5 on Talos main in late November
+2026). A kernel of another version builds, but the UKI step fails with
+`copying kernel modules from .../usr/lib/modules failed: stat .../7.3.1-talos: no such file or directory`. Talos does
+not publish imager or installer-base images for main, so a hardware test needs a Talos release whose kernel version
+matches the one in pkgs.
+
 ## Upgrade pitfalls seen on a Jetson with these images
 
 - **Stale boot entry** (see `BUGS.md`, Bug 25): on an upgrade from Talos v1.14.4 or older, a failed kexec makes

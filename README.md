@@ -431,6 +431,14 @@ kubectl logs -n nvidia-system -l app=jetson-power-mode | grep "cur_freq"
 # Expected: GPU cur_freq=918000000 Hz
 ```
 
+Right after an upgrade or reboot the first measurement can still be low: the r39 `nvgpu` creates its devfreq node
+only at the first GPU use, and the power-mode DaemonSet sets the clock only after that (log line
+`GPU devfreq appeared, capped at ...`). Send one short warm-up request, wait about 30 s, then measure.
+
+On Linux 7.2 and newer (Talos 1.15) also check the platform: `talosctl read /sys/devices/soc0/revision --nodes <jetson-ip>`
+must print `Silicon A01`. `Asim QT` means the kernel lacks the platform fix and the GPU runs about 7x slower
+(`BUGS.md`, Bug 28).
+
 ### `cuInit` returns 801 (CUDA_ERROR_NOT_SUPPORTED)
 
 This was the root cause before the DRM fix was applied. With the current extensions, this should

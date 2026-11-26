@@ -1285,3 +1285,24 @@ the r39 manifest in PR #65 (`manifests/gpu/cdi-setup.yaml`).
 
 **Validation (2026-11-04)**: script logic tested locally (fresh copy, unchanged rerun, changed
 file, added file, removed file). Not yet tested on the Orin NX.
+
+---
+
+## Bug 28 — GPU About 7x Slower on Linux 7.2+: Orin Reported as Pre-Silicon
+
+**Symptom**: on Talos 1.15 (Linux 7.3) all GPU modules load and CUDA works, but Ollama runs at about a seventh
+of the 6.18 speed (Orin NX: 10.3 instead of 70-77 tok/s for qwen2.5:0.5b). `/sys/devices/soc0/revision` reads
+`Asim QT` instead of `Silicon A01`.
+
+**Root cause**: 8b8ee2e56f95 ("soc/tegra: Use ARM SMCCC to get chip ID, revision, and platform info", Linux 7.2)
+makes `tegra_get_platform()` read the platform from bits [15:8] of the SMCCC SoC revision. The TF-A firmware on
+Tegra194 and Tegra234 puts the HIDREV major revision there (`(major << 8) | minor`, `0x401` on Orin), so the
+platform reads as 4 (`ASIM_QT`) and `tegra_is_silicon()` returns false. nvgpu then takes its pre-silicon code
+paths. The commit message says older SoCs are unaffected, but Orin's TF-A implements the SMCCC SoC ID call.
+
+**Fix**: `kernel-patches/0001-soc-tegra-fuse-platform-from-hidrev-on-tf-a-socs.patch` reads the platform from HIDREV
+again on Tegra210/186/194/234 and keeps SMCCC for Tegra241 and later; chip ID and revision still come from SMCCC.
+Not submitted to linux-tegra; siderolabs/pkgs carries it in `kernel/build/patches/`.
+
+**Validation (2026-11-04 to 2026-11-25)**: Orin NX 16 GB on 7.3.0 and 7.3.1, AGX Orin 64 GB on 7.3.1, and an
+independent AGX Orin 64 GB on 7.3.4: `Silicon A01` and full GPU speed (see `docs/jetpack7.md`, "Linux 7.3").
