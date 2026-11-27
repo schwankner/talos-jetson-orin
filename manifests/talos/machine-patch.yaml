@@ -25,7 +25,7 @@ machine:
     kernel.kexec_load_disabled: "1"
   install:
     disk: /dev/nvme0n1
-    image: ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7-headless
+    image: ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7-2
     wipe: false
   kernel:
     modules:
