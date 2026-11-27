@@ -325,7 +325,7 @@ source scripts/common.sh
 
 **Custom installer image** (for `talosctl upgrade`):
 ```
-ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7-headless
+ghcr.io/schwankner/custom-installer-jp7:v1.14.7-6.18.65-nvgpu39.2.1-jp7-2
 ```
 
 r36 nodes use the repository `custom-installer`
@@ -377,7 +377,7 @@ Running r39 on a node: the board's QSPI can stay on r36.5 firmware or be flashed
 | Talos Linux | v1.14.7 |
 | Kubernetes | v1.37.1 |
 | Linux kernel | 6.18.65-talos |
-| nvidia-tegra-nvgpu extension | 39.2.1-jp7-headless (r39, default), 5.13.0-drm-noshim (r36) |
+| nvidia-tegra-nvgpu extension | 39.2.1-jp7-2 (r39, default), 5.13.0-drm-noshim (r36) |
 | JetPack libs (userspace) | r39.2.1 (r39), r36.5.0 (r36) |
 | Ollama | 0.20.5 |
 
@@ -446,7 +446,7 @@ This was the root cause before the DRM fix was applied. With the current extensi
 not occur. Verify the correct extension is loaded:
 ```bash
 talosctl get extensions --nodes <jetson-ip> | grep nvgpu
-# Expected: nvidia-tegra-nvgpu  39.2.1-jp7-headless-6.18.65-talos   (r36: 5.13.0-drm-noshim-6.18.65-talos)
+# Expected: nvidia-tegra-nvgpu  39.2.1-jp7-2-6.18.65-talos   (r36: 5.13.0-drm-noshim-6.18.65-talos)
 ```
 
 ### Failed GPU pods after a reboot (`UnexpectedAdmissionError`, `NodeShutdown`)

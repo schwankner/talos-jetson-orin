@@ -14,10 +14,10 @@ kernel faults, and the node cold-booted cleanly after a power loss. CUDA 13 *con
 | | r36 (`JETPACK=r36`) | r39 (default) |
 |---|---|---|
 | nvgpu package | `nvidia-tegra-nvgpu/` (OE4T `patches-r36.5`) | `nvidia-tegra-nvgpu-r39/` (NVIDIA gitlab, tag `jetson_39.2.1`) |
-| Installer image | `custom-installer:<talos>-<kernel>-nvgpu5.13.0-drm-noshim` | `custom-installer-jp7:<talos>-<kernel>-nvgpu39.2.1-jp7-headless` |
-| Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-headless-<kernel>-talos` |
+| Installer image | `custom-installer:<talos>-<kernel>-nvgpu5.13.0-drm-noshim` | `custom-installer-jp7:<talos>-<kernel>-nvgpu39.2.1-jp7-2` |
+| Extension tag | `5.13.0-drm-noshim-<kernel>-talos` | `39.2.1-jp7-2-<kernel>-talos` |
 | Machine config patch | `manifests/talos/machine-patch-r36.yaml` | `manifests/talos/machine-patch.yaml` |
-| Firmware extension | `nvidia-firmware-ext:v5` (r36 apt, component `t234`) | `nvidia-firmware-ext:r39-v1` (`scripts/build-r39-firmware.sh`) |
+| Firmware extension | `nvidia-firmware-ext:v5` (r36 apt, component `t234`) | `nvidia-firmware-ext:r39-v2` (`scripts/build-r39-firmware.sh`) |
 | Userspace libraries | downloaded on the node (`t234` apt) | downloaded on the node (`som` apt, `manifests/gpu/cdi-setup.yaml`) |
 | Board firmware (QSPI) | JetPack 6 (also ran on r39.2.0) | JetPack 7 (r39.2.0) or JetPack 6 (r36.5); both tested on Orin NX and AGX Orin, see [Firmware and image combinations](#firmware-and-image-combinations) |
 
