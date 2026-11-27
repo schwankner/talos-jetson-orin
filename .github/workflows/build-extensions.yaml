@@ -126,6 +126,13 @@ jobs:
              /tmp/talos-pkgs/kernel-modules-clang/pkg.yaml
           echo "✓ kernel-modules-clang/pkg.yaml injected"
 
+          # TEST ONLY: add kernel-patches/ to kernel/build/patches (applied by kernel-build); the
+          # pkgs commit of Talos v1.15.0-beta.0 predates the HIDREV fix in siderolabs/pkgs.
+          for p in "${GITHUB_WORKSPACE}"/kernel-patches/*.patch; do
+            cp "$p" "/tmp/talos-pkgs/kernel/build/patches/9$(basename "$p")"
+          done
+          echo "✓ kernel test patches added: $(ls /tmp/talos-pkgs/kernel/build/patches/)"
+
           # Note: LLVM_IMAGE and TOOLS_REV are already defined in siderolabs/pkgs
           # Pkgfile (release-1.13+) — no injection needed. ${NVGPU_PKG}/pkg.yaml
           # references {{ .LLVM_IMAGE }}:{{ .TOOLS_REV }} directly from the Pkgfile vars.
@@ -141,7 +148,7 @@ jobs:
         run: make build-extensions
         timeout-minutes: 360
         env:
-          SKIP_KERNEL_CACHE_EXPORT: ${{ env.JETPACK == 'r39' && '1' || '0' }}
+          SKIP_KERNEL_CACHE_EXPORT: '0'  # TEST: r39-only build on a new kernel, keep the kernel cache
           REGISTRY: ghcr.io/${{ github.repository_owner }}
           REGISTRY_DOCKER: ghcr.io/${{ github.repository_owner }}
           # BuildKit registry cache (mode=max): caches ALL intermediate layers

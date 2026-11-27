@@ -7,17 +7,17 @@ dependencies:
   - image: "{{ .LLVM_IMAGE }}:{{ .TOOLS_REV }}"
 steps:
   - sources:
-      # JetPack 7.2 / Jetson Linux r39.2.1 (tag jetson_39.2.1), straight from NVIDIA's gitlab:
+      # TEST: Jetson Linux r39.2.2 (tag jetson_39.2.2_GA), straight from NVIDIA's gitlab:
       # OE4T has no r39 branch of linux-nvgpu or linux-nv-oot. See docs/jetpack7.md for why
       # r39.2.1 (nvmap out-of-bounds fixes) and how to fall back to r39.2.0.
-      - url: https://gitlab.com/nvidia/nv-tegra/tegra/kernel-src/linux-nvgpu/-/archive/fc23d33512d3bf1361b201e31406c47762102429/linux-nvgpu-fc23d33512d3bf1361b201e31406c47762102429.tar.gz
+      - url: https://gitlab.com/nvidia/nv-tegra/tegra/kernel-src/linux-nvgpu/-/archive/3ffa9bea6b9651bc511195192d8a302f3ca1c81d/linux-nvgpu-3ffa9bea6b9651bc511195192d8a302f3ca1c81d.tar.gz
         destination: nvgpu.tar.gz
-        sha256: "5291c81113b607479d6f3a089105b78d549c23ebd1df82ee09055400b22ff03f"
-        sha512: "8f0e3e677a6a3d9b9121e6713965daf1a0e69f0fbf3056a9d3625e94bfa9742ebca60f75bee5306698a7714c60b3eeddfd5a2d13a46c41c078824d924e15ca25"
-      - url: https://gitlab.com/nvidia/nv-tegra/linux-nv-oot/-/archive/e71bacb7c611f880c5f341263967f13de54de3a9/linux-nv-oot-e71bacb7c611f880c5f341263967f13de54de3a9.tar.gz
+        sha256: "ceb99c0b7e853836c38d9262e549ec03be39164a963c752eb808696a4f9d11d5"
+        sha512: "312ab2e963b0643d4a950405e073926e93154bed6d755a795181f8b86503d6edd842e542baaf0539d38e563bae7d9e0dc3d6f3526c8d90bb0631ddc5241f7d4d"
+      - url: https://gitlab.com/nvidia/nv-tegra/linux-nv-oot/-/archive/ec90ce136485a62264975d20a150d6d6c29d3caa/linux-nv-oot-ec90ce136485a62264975d20a150d6d6c29d3caa.tar.gz
         destination: nvidia-oot.tar.gz
-        sha256: "80cdea02475ecc94f98bb1a9de81315a1d7f7985d99cba14621c1198ccdd1362"
-        sha512: "9189f0580f0ff7d7f46464b519c4705f8ffa7195c4db2b9fb7c7aafb578a545399e56aa8710943216c603e9a55bad228d8cdf4da06b25cb77c9f4355938186e0"
+        sha256: "5a873311a358a580c62ac5414e5c6a66fbf646d2f0865c8998d934ee3e92a472"
+        sha512: "4ea8fe454701c9ac25c17269f0600002db31258e16e64a89d29399b28e6b1bb356a946d9222630c7e0bfbb1ea1501c60a461ee63e043c0f8feae500cb19986ff"
       - url: https://gitlab.com/nvidia/nv-tegra/linux-hwpm/-/archive/80b966b1bdc20f896cc9625a84708cbbe4638e38/linux-hwpm-80b966b1bdc20f896cc9625a84708cbbe4638e38.tar.gz
         destination: hwpm.tar.gz
         sha256: "98db24aba32e1140233b0793621a4758dc4f4688670041c12b81c1861a42231a"
@@ -62,7 +62,7 @@ steps:
         cp -a /oot-src/nvidia-oot/scripts/conftest/. $CONFTEST/
         sed -i 's/ -Werror / /' $CONFTEST/Makefile
         make -j$(nproc) -f $CONFTEST/Makefile src=$CONFTEST obj=$CONFTEST \
-          NV_KERNEL_SOURCES=/src NV_KERNEL_OUTPUT=/src
+          NV_KERNEL_SOURCES=/src NV_KERNEL_OUTPUT=/src EXTRA_CFLAGS=-fms-anonymous-structs
         # a probe every 6.3+ kernel must pass: fails the build if conftest itself is broken
         grep -rq '#define NV_IOMMU_MAP_HAS_GFP_ARG' $CONFTEST/conftest/
       - |
