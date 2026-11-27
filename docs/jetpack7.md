@@ -211,21 +211,24 @@ tested on hardware with 7.3.1. The 7.3 ports and the test setup are on branch `t
 slower (`BUGS.md`, Bug 28). `kernel-patches/0001-soc-tegra-fuse-platform-from-hidrev-on-tf-a-socs.patch` fixes it;
 siderolabs/pkgs carries it as `kernel/build/patches/0020-soc-tegra-fuse-read-the-platform-from-HIDREV-on-TF-A.patch`.
 
-**Source ports** (patches against `jetson_39.2.1`):
+**Source ports** (patches against `jetson_39.2.1`). The API changes they follow date from Linux 7.1 and 7.2; the
+patches were only built and tested on 7.3:
 
 | Tree | Patch | Why |
 |---|---|---|
-| nvgpu | `0001-pci-power-gpio-descriptors` | the integer OF GPIO interface is gone |
-| nvgpu | `0002-pmu-trace-prefix-copy` | `strncpy` is gone |
-| nvgpu | `0003-dmabuf-special-vma-zap` | `zap_vma_ptes` was replaced by `zap_special_vma_range` |
-| nvgpu | `0004-bounded-string-copies` | the last three `strncpy` calls (nvsched domain, vGPU ECC stats, PMU trace) |
-| nvgpu | `0005-thermal-gpio-descriptor` | `of_get_named_gpio()` / `gpio_to_irq()` are gone |
-| nvidia-oot | `0003-host1x-fence-lock-accessor` | `struct dma_fence` has no `lock` member; use `dma_fence_spinlock()` |
-| nvidia-oot | `0004-tegra-drm-atomic-commit` | `struct drm_atomic_state` is `struct drm_atomic_commit` |
+| nvgpu | `0001-pci-power-gpio-descriptors` | `of_get_named_gpio()` and `<linux/of_gpio.h>` were removed in 7.1 |
+| nvgpu | `0002-pmu-trace-prefix-copy` | `strncpy()` was removed in 7.2 |
+| nvgpu | `0003-dmabuf-special-vma-zap` | `zap_vma_ptes()` was replaced by `zap_special_vma_range()` in 7.1 |
+| nvgpu | `0004-bounded-string-copies` | the other three `strncpy()` calls (nvsched domain, vGPU ECC stats, debugfs PMU trace) |
+| nvgpu | `0005-thermal-gpio-descriptor` | `of_get_named_gpio()` was removed in 7.1; `gpio_to_irq()` still exists (`CONFIG_GPIOLIB_LEGACY`), but needs the GPIO number that lookup returned |
+| nvidia-oot | `0003-host1x-fence-lock-accessor` | `struct dma_fence` has no `lock` member since 7.1 (1f32f310a13c); use `dma_fence_spinlock()` |
+| nvidia-oot | `0004-tegra-drm-atomic-commit` | `struct drm_atomic_state` was renamed to `struct drm_atomic_commit` in 7.2 |
 | nvidia-oot | `0005-tegra-drm-drm-timeout-header` | 7.3.6 only: `drm_timeout_abs_to_jiffies()` moved to `drm/drm_timeout.h` (backport of ae72b9c39d28); 7.3.1 does not have the header |
 
 Besides the patches: tegra-drm is built headless, without its display code (now also on 6.18, see above), and
-conftest gets `EXTRA_CFLAGS=-fms-anonymous-structs` to match Kbuild's flags for the kernel headers.
+conftest gets `EXTRA_CFLAGS=-fms-anonymous-structs`: since 7.1 Kbuild adds `CONFIG_CC_MS_EXTENSIONS` (with clang
+`-fms-anonymous-structs`; 6.19 and 7.0 used `-fms-extensions`) for tagged anonymous structs in the kernel headers,
+and conftest does not pick it up.
 
 **Results on 7.3.1** (with the kernel fix, r36.5 QSPI firmware on both boards): `soc0/revision` reads
 `Silicon A01`, all 12 modules load, `/dev/dri/renderD128` is present, CUDA 13.2 works. Ollama, the same as on
